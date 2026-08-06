@@ -4,8 +4,15 @@ import pytest
 import data
 
 
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch):
+    # Retries sleep with backoff between attempts -- skip the real delay so
+    # the exception-wrapping tests (which exhaust all retries) stay fast.
+    monkeypatch.setattr(data.time, "sleep", lambda _: None)
+
+
 class _FakeGameLog:
-    def __init__(self, player_id, season):
+    def __init__(self, player_id, season, timeout=None):
         self.player_id = player_id
         self.season = season
 
@@ -24,7 +31,7 @@ class _FakeGameLog:
 
 
 class _FakeAdvancedStats:
-    def __init__(self, season, measure_type_detailed_defense):
+    def __init__(self, season, measure_type_detailed_defense, timeout=None):
         self.season = season
         self.measure_type_detailed_defense = measure_type_detailed_defense
 
@@ -42,7 +49,7 @@ class _FakeAdvancedStats:
 
 
 class _FakeTeamGameLog:
-    def __init__(self, team_id, season):
+    def __init__(self, team_id, season, timeout=None):
         self.team_id = team_id
         self.season = season
 
@@ -57,7 +64,7 @@ class _FakeTeamGameLog:
 
 
 class _FakeTeamAdvancedStats:
-    def __init__(self, season, measure_type_detailed_defense):
+    def __init__(self, season, measure_type_detailed_defense, timeout=None):
         self.season = season
         self.measure_type_detailed_defense = measure_type_detailed_defense
 
@@ -67,7 +74,7 @@ class _FakeTeamAdvancedStats:
 
 
 class _FakeShotChart:
-    def __init__(self, team_id, player_id, season_nullable, context_measure_simple):
+    def __init__(self, team_id, player_id, season_nullable, context_measure_simple, timeout=None):
         self.team_id = team_id
         self.player_id = player_id
         self.season_nullable = season_nullable
@@ -91,6 +98,33 @@ class _FakeShotChart:
 class _RaisesOnInit:
     def __init__(self, *args, **kwargs):
         raise RuntimeError("simulated nba_api failure")
+
+
+# --- _call_with_retries -------------------------------------------------------
+
+def test_call_with_retries_succeeds_after_transient_failures():
+    calls = {"count": 0}
+
+    def flaky():
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise TimeoutError("simulated transient timeout")
+        return "ok"
+
+    assert data._call_with_retries(flaky) == "ok"
+    assert calls["count"] == 3
+
+
+def test_call_with_retries_raises_after_exhausting_attempts():
+    calls = {"count": 0}
+
+    def always_fails():
+        calls["count"] += 1
+        raise TimeoutError("simulated permanent timeout")
+
+    with pytest.raises(TimeoutError):
+        data._call_with_retries(always_fails)
+    assert calls["count"] == data.MAX_ATTEMPTS
 
 
 # --- get_all_players --------------------------------------------------------
