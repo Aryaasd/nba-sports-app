@@ -2,4 +2,7 @@ streamlit==1.50.0
 pandas==2.3.3
 altair==5.5.0
 nba_api==1.10.2
-numpy==2.0.2
+# numpy left unpinned -- pinning it to 2.0.2 conflicted with nba_api's own
+# numpy>=2.1.0 requirement (caught by Streamlit Cloud's strict uv resolver;
+# pip locally didn't re-verify an already-installed numpy and let it slide).
+numpy>=2.1.0
