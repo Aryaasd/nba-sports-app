@@ -10,8 +10,13 @@ venv/
 env/
 .env
 
-# Streamlit
-.streamlit/
+# Streamlit -- config.toml (theme) is tracked and shipped with the app;
+# only secrets.toml (API keys, etc.) should never be committed.
+.streamlit/secrets.toml
+
+# Test/lint caches
+.pytest_cache/
+.ruff_cache/
 
 # Distribution / packaging
 .Python

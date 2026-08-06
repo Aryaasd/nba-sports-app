@@ -1,0 +1,10 @@
+# Theme values from the validated dark-mode reference palette (dataviz skill,
+# references/palette.md) -- kept in sync with the Altair theme registered in
+# charts.py so the Streamlit chrome and the charts sit on the same surface.
+[theme]
+base = "dark"
+primaryColor = "#3987e5"
+backgroundColor = "#0d0d0d"
+secondaryBackgroundColor = "#1a1a19"
+textColor = "#ffffff"
+font = "sans serif"
