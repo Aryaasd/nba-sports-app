@@ -10,8 +10,9 @@ An interactive Streamlit app for comparing NBA player stats and exploring hypoth
 
 **[Try it live](https://nba-sports-app-jneksyc8sa3dsvprpkbxdq.streamlit.app/)**
 
-<!-- TODO: replace with a ~15s screen-recorded GIF comparing two players and flipping through the Insights tabs -->
-![demo](#)
+> **A known limitation, not a bug:** `stats.nba.com` throttles or times out requests from cloud/datacenter IP ranges (Streamlit Community Cloud, Heroku, Render, etc.) far more aggressively than from a residential connection. The deployed demo may occasionally show a connectivity error instead of live data as a result — a widely-documented constraint of building on `nba_api` from free cloud hosting, confirmed here after adding retries with backoff didn't clear it. The GIF below was recorded locally, where this restriction doesn't apply; running the app locally (see below) always has full access.
+
+![demo](docs/demo.gif)
 
 ---
 
