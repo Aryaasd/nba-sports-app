@@ -1,6 +1,6 @@
 # NBA Player Stats App
 
-An interactive Streamlit app for comparing NBA player stats and exploring hypothesis-driven data-science insights, powered by `nba_api`.
+An interactive Streamlit app for comparing NBA players, testing hypotheses about their performance, and forecasting their next games. It runs on `nba_api` data, and every model is reported next to the simple baseline it has to beat.
 
 [![CI](https://github.com/Aryaasd/nba-sports-app/actions/workflows/ci.yml/badge.svg)](https://github.com/Aryaasd/nba-sports-app/actions/workflows/ci.yml)
 
@@ -10,7 +10,7 @@ An interactive Streamlit app for comparing NBA player stats and exploring hypoth
 
 **[Try it live](https://nba-sports-app-jneksyc8sa3dsvprpkbxdq.streamlit.app/)**
 
-> **A known limitation, not a bug:** `stats.nba.com` throttles or times out requests from cloud/datacenter IP ranges (Streamlit Community Cloud, Heroku, Render, etc.) far more aggressively than from a residential connection. The deployed demo may occasionally show a connectivity error instead of live data as a result — a widely-documented constraint of building on `nba_api` from free cloud hosting, confirmed here after adding retries with backoff didn't clear it. The GIF below was recorded locally, where this restriction doesn't apply; running the app locally (see below) always has full access.
+> **About the hosted demo:** `stats.nba.com` blocks requests from most cloud hosts, including Streamlit Community Cloud. When live data can't be reached, the app offers a one-click switch to a bundled **real** snapshot (LeBron James and Stephen Curry, 2025-26), and a banner says so. Any other selection shows an error rather than made-up data. Run it locally (see below) for live data on every player.
 
 ![demo](docs/demo.gif)
 
@@ -18,23 +18,72 @@ An interactive Streamlit app for comparing NBA player stats and exploring hypoth
 
 ## Key Features
 
-* **Compare Two Players:** Season game logs for any two players, side-by-side or overlaid, PTS/REB/AST charted by game.
-* **Advanced Metrics:** TS%, USG%, PACE, PIE (pulled directly from `nba_api`'s advanced stats), plus hand-computed PTS/REB/AST per-36 rates.
-* **Insights tab — four hypothesis-driven analyses for one player-season, not just dashboard metrics:**
-  * **Absence & Rest Impact** — how a player performs in the games right after missing time, vs. their own season baseline.
-  * **Performance vs. Defense** — scoring split against opponents bucketed by measured `DEF_RATING`.
-  * **Hot Hand Fallacy** — an actual permutation test of whether a player's makes/misses are streakier than chance, in the spirit of Gilovich, Vallone & Tversky (1985) and the Miller & Sanjurjo (2015) bias correction.
-  * **Shot Chart** — a hand-drawn court with a field-goal-percentage heatmap, muted for low-attempt bins so small samples don't look like real signal.
-* **Cached:** Every `nba_api` call is wrapped in `@st.cache_data`, so switching chart views or re-selecting a player never re-hits the network unnecessarily.
+* **Compare Two Players:** season game logs for any two players, side by side or overlaid.
+* **Advanced Metrics:** TS%, USG%, PACE, and PIE from `nba_api`'s advanced stats, plus hand-computed per-36 rates.
+* **Insights:** four hypothesis-driven analyses for one player-season:
+  * **Absence & Rest Impact** — performance in the games right after missed time, compared with the player's own season baseline.
+  * **Performance vs. Defense** — scoring against opponents bucketed by measured `DEF_RATING`.
+  * **Hot Hand Fallacy** — a permutation test of whether makes and misses are streakier than chance, in the spirit of Gilovich, Vallone & Tversky (1985) and the Miller & Sanjurjo (2015) bias correction.
+  * **Shot Chart** — a field-goal-percentage heatmap on a hand-drawn court, with low-attempt bins muted so small samples don't look like signal.
+* **Predictions:** two forecasting techniques, each scored only on games it hadn't seen:
+  * **Next-Game Points Model** — a Ridge regression trained on 20,932 player-games. It shows a per-player backtest chart and a next-game projection.
+  * **Season Forecast** — simple exponential smoothing on one player's own season, validated walk-forward. The fitted smoothing weight is itself a finding (see below).
+* **Resilient demo:** a circuit breaker and a labeled sample-data fallback, so the hosted app never dead-ends on a blocked API.
 
-Every Insights analysis is deliberately honest about what it can't show — see [How It Works](#how-it-works) for the specific data limitations each one works around.
+---
+
+## Model Evaluation
+
+The goal was to find out honestly how well next-game stats *can* be predicted, not to make a model look good. Two rules apply to every number below: a prediction only ever uses games played before it, and every model is compared against simple averages.
+
+### Next-game points: Ridge regression
+
+**Setup**
+- **Training data:** every player's 2024-25 regular season (20,932 player-games after each player's first 10).
+- **Features:** trailing 5- and 10-game averages of points, rebounds, assists, and minutes, plus days of rest and home/away.
+- **Validation:** 5-fold time-series cross-validation, split on whole dates so a single night never straddles train and validation. The **entire 2025-26 season** is a holdout the model never saw.
+
+| Model | CV MAE (2024-25) | Holdout MAE (2025-26) | Holdout RMSE |
+|---|---:|---:|---:|
+| 5-game average (naive baseline) | 4.914 | 4.867 | 6.376 |
+| 10-game average (stronger baseline) | 4.777 | 4.716 | 6.181 |
+| **Ridge regression** | **4.759** | **4.708** | **6.115** |
+| Random forest (comparison only) | 4.779 | 4.723 | 6.132 |
+
+**What this shows**
+- The model beats a 5-game average by 3.3%, but a plain 10-game average by only **0.2%**. A longer averaging window captures about 95% of the gain; the other features add little.
+- Single-game scoring is mostly noise around a player's level. With a typical miss near 4.7 points, the floor is close to what any box-score model can reach.
+- A nonlinear random forest didn't beat Ridge, so the simpler, interpretable model ships.
+
+### Season forecast: exponential smoothing
+
+Each player's season is treated as a time series. At every game *k*, three forecasters see only games 1..*k*−1 and predict game *k* (rolling-origin evaluation). Results across **367 players with 40+ games in 2025-26**:
+
+| Stat | Smoothing MAE | Season-mean MAE | Last-game MAE | Smoothing beats season mean | Median fitted α |
+|---|---:|---:|---:|---:|---:|
+| PTS | 4.72 | 4.74 | 6.05 | 39% of players | 0.00 |
+| REB | 1.95 | 1.93 | 2.49 | 37% of players | 0.00 |
+| AST | 1.38 | 1.37 | 1.72 | 39% of players | 0.00 |
+
+- Smoothing ties the season-to-date average, and both beat "last game carried forward" by about 22%.
+- **The median fitted smoothing weight is 0**: for the typical player, the best forecast puts no extra weight on recent games. That's the hot-hand question asked per game instead of per shot, with the same answer — recent form carries little signal beyond a player's season level.
+
+### Limitations
+
+* Box scores only. There's no injury, minutes-restriction, opponent, or lineup information; no free source exists for the first two.
+* The model is trained on one season. A different era, or a rule change, could shift the relationships.
+* The next-game projection needs rest days and home/away as user inputs, because the app has no schedule feed.
+* Point forecasts only; no prediction intervals.
+
+Reproduce the numbers with `python -m scripts.train_model` (about 10s) and `python -m scripts.evaluate_forecast` (about 1 min). Both pull live data, so run them from a non-cloud machine.
 
 ---
 
 ## Tech Stack
 
 * **Core:** Python, Streamlit
-* **Data:** Pandas, NumPy, `nba_api`
+* **Data:** Pandas, NumPy, `nba_api`, Parquet (bundled snapshot)
+* **Modeling:** scikit-learn (Ridge, random forest, `TimeSeriesSplit`; training only), statsmodels (exponential smoothing)
 * **Visualization:** Altair
 * **Testing/CI:** pytest, ruff, GitHub Actions
 
@@ -44,7 +93,7 @@ Every Insights analysis is deliberately honest about what it can't show — see 
 
 ### Prerequisites
 
-* Python 3.9+
+* Python 3.11+
 * `pip`
 
 ### Installation & Setup
@@ -58,13 +107,13 @@ Every Insights analysis is deliberately honest about what it can't show — see 
 2. **(Recommended) Create and activate a virtual environment:**
    * **Windows:**
      ```bash
-     python -m venv venv
-     .\venv\Scripts\activate
+     python -m venv .venv
+     .\.venv\Scripts\activate
      ```
    * **macOS / Linux:**
      ```bash
-     python3 -m venv venv
-     source venv/bin/activate
+     python3 -m venv .venv
+     source .venv/bin/activate
      ```
 
 3. **Install the required dependencies:**
@@ -77,23 +126,30 @@ Every Insights analysis is deliberately honest about what it can't show — see 
    streamlit run sports_app.py
    ```
 
-Your app should now be open and running in your default web browser.
-
 ---
 
 ## How It Works
 
-The app is split into small, single-purpose modules instead of one script:
+The app is split into small, single-purpose modules:
 
-* **`data.py`** — every `nba_api` call, each wrapped in `@st.cache_data(ttl=3600)`. Advanced stats and team stats are fetched once per season and shared across every player, not re-fetched per selection.
-* **`metrics.py`** — pure logic (season strings, player lookup, TS%/per-36 math). No `streamlit` or `nba_api` imports, so it's fast to unit test in isolation.
-* **`charts.py`** — Altair chart builders, plus a registered dark theme (validated CVD-safe categorical and diverging color pairs) shared by every chart in the app.
-* **`insights/`** — the four Insights-tab analyses, each in its own module (`absence.py`, `defense_tiers.py`, `hot_hand.py`, `shot_chart.py`), each honest about a real data limitation rather than overclaiming what free NBA data can show:
-  * No free live injury-designation feed exists anywhere, so **Absence & Rest Impact** measures games missed and return-game performance, never *why* a game was missed.
-  * True defensive-scheme data (zone vs. man, coverage type) is proprietary tracking data, so **Performance vs. Defense** compares against opponents bucketed by the league's own measured `DEF_RATING` instead.
-  * **Hot Hand Fallacy** runs a permutation test (shuffling each game's own shot sequence thousands of times) rather than a naive streak count, specifically to sidestep the selection bias in the original 1985 hot-hand analysis.
-  * Every analysis returns an explicit "not enough data" result instead of a misleading number when the sample is too small — a single absence event, or a shot chart with only a handful of attempts, says so rather than guessing.
-* **`sports_app.py`** — thin Streamlit UI glue. It contains no data-fetching or stat-math logic of its own.
+* **`data.py`** — every `nba_api` call. Each is cached for an hour with `@st.cache_data`, retried once, and guarded by a circuit breaker: after a network failure, live calls pause for 10 minutes instead of re-waiting out the timeout on every request. On failure it falls back to the bundled snapshot, but only for the exact selections that snapshot covers.
+* **`metrics.py`** — pure logic: season strings, player lookup, TS% and per-36 math.
+* **`modeling.py`** — next-game feature engineering and inference, shared by training and the live app so the two can't drift apart.
+  * Each feature is built from the player's own earlier games only: shifted one game, computed per player, and requiring a full window.
+  * The model ships as plain JSON coefficients (`model/next_game_points.json`), so the deployed app doesn't need scikit-learn.
+* **`model_training.py`** — date-block time-series CV, model fitting, and coefficient export (scikit-learn).
+* **`insights/`** — one module per analysis (`absence.py`, `defense_tiers.py`, `hot_hand.py`, `shot_chart.py`, `forecast.py`). Each is honest about a real data limitation:
+  * No free injury-designation feed exists, so **Absence & Rest Impact** measures games missed, never *why* they were missed.
+  * Defensive-scheme data is proprietary, so **Performance vs. Defense** buckets opponents by measured `DEF_RATING` instead.
+  * **Hot Hand** shuffles each game's own shot sequence thousands of times, to sidestep the selection bias in the original 1985 analysis.
+  * Every analysis returns an explicit "not enough data" result instead of a misleading number from a tiny sample.
+* **`sample_data_loader.py` + `sample_data/`** — the bundled real snapshot used when the live API is unreachable. See [`sample_data/README.md`](sample_data/README.md) for its provenance.
+* **`scripts/`** — one-off jobs:
+  * `train_model` — trains and evaluates the model, and writes the JSON.
+  * `evaluate_forecast` — the league-wide forecast table above.
+  * `capture_sample_data` — refreshes the snapshot.
+* **`charts.py`** — Altair chart builders and a dark theme with colorblind-safe categorical and diverging colors.
+* **`sports_app.py`** — thin Streamlit UI glue, with no data-fetching or stat-math logic of its own.
 
 ---
 
@@ -105,7 +161,14 @@ pytest
 ruff check .
 ```
 
-All pure-logic modules (`metrics.py`, `charts.py`, `data.py`, and everything in `insights/`) are unit tested with mocked `nba_api` calls — tests never hit the live network, so they're fast and don't flake on rate limits. The Streamlit UI itself isn't tested (that would need `streamlit.testing.v1.AppTest`); it's kept thin enough that the logic it calls is what's actually verified.
+Every logic module is unit tested with mocked `nba_api` calls, so tests never hit the network. The tests that matter most guard the evaluation itself:
+* CV folds never train on a date at or after their validation dates.
+* Walk-forward forecasts never see the game they predict.
+* Rolling features never include the current game or another player's history.
+* The exported JSON coefficients reproduce scikit-learn's predictions.
+* The fallback never serves sample data for a selection outside the snapshot.
+
+The Streamlit UI itself isn't tested; it's kept thin enough that the logic it calls is what's verified.
 
 ---
 
@@ -115,18 +178,6 @@ All pure-logic modules (`metrics.py`, `charts.py`, `data.py`, and everything in 
 2. Sign in to [share.streamlit.io](https://share.streamlit.io) with GitHub.
 3. Click **New app**, select your repo/branch, and set the entry file to `sports_app.py`.
 4. Deploy.
-
----
-
-## Contributing
-
-Contributions are welcome. Fork the repo, create a feature branch, and open a pull request.
-
-1. Fork the project
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a pull request
 
 ---
 
