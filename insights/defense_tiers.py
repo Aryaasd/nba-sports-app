@@ -35,6 +35,11 @@ def extract_own_team_abbreviation(matchup: str) -> str:
     return _split_matchup(matchup)[0]
 
 
+def is_home_game(matchup: str) -> bool:
+    """"LAL vs. HOU" -> True (home), "LAL @ DAL" -> False (away)."""
+    return "vs." in matchup
+
+
 def bucket_teams_by_defense(
     team_advanced_df: pd.DataFrame, team_id_to_abbr: dict[int, str]
 ) -> dict[str, str]:

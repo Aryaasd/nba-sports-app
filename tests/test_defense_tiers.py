@@ -35,6 +35,19 @@ def test_extract_own_team_abbreviation(matchup, expected):
     assert defense_tiers.extract_own_team_abbreviation(matchup) == expected
 
 
+@pytest.mark.parametrize(
+    "matchup, expected",
+    [
+        ("OKC vs. IND", True),
+        ("IND @ OKC", False),
+        ("LAL vs. HOU", True),
+        ("LAL @ DAL", False),
+    ],
+)
+def test_is_home_game(matchup, expected):
+    assert defense_tiers.is_home_game(matchup) is expected
+
+
 def _team_advanced_df():
     # Median of [118.4, 108.4, 112.0, 122.0] is 115.2 -> BOS/LAL Elite, ATL/MIA Weak.
     return pd.DataFrame(

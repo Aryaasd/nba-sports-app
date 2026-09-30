@@ -1,0 +1,214 @@
+{
+  "model_type": "ridge",
+  "target": "PTS",
+  "feature_columns": [
+    "PTS_roll5",
+    "REB_roll5",
+    "AST_roll5",
+    "MIN_roll5",
+    "PTS_roll10",
+    "REB_roll10",
+    "AST_roll10",
+    "MIN_roll10",
+    "DAYS_REST",
+    "IS_HOME"
+  ],
+  "intercept": 1.151706,
+  "coefficients": [
+    0.059382,
+    0.05244,
+    0.045882,
+    0.106759,
+    0.771471,
+    -0.033377,
+    0.18477,
+    -0.088974,
+    -0.157114,
+    0.06812
+  ],
+  "standardized_coefficients": {
+    "PTS_roll5": 0.425667,
+    "REB_roll5": 0.143267,
+    "AST_roll5": 0.098089,
+    "MIN_roll5": 0.979243,
+    "PTS_roll10": 5.323688,
+    "REB_roll10": -0.087027,
+    "AST_roll10": 0.379061,
+    "MIN_roll10": -0.793773,
+    "DAYS_REST": -0.259674,
+    "IS_HOME": 0.03406
+  },
+  "training_season": "2024-25",
+  "holdout_season": "2025-26",
+  "n_train_rows": 20932,
+  "n_holdout_rows": 21204,
+  "ridge_alpha": 1.0,
+  "cv_n_splits": 5,
+  "cv_metrics": {
+    "folds": [
+      {
+        "fold": 1,
+        "n_train": 2956,
+        "n_val": 3071,
+        "val_start": "2024-12-06",
+        "val_end": "2025-01-01",
+        "metrics": {
+          "baseline_roll5": {
+            "mae": 4.951482,
+            "rmse": 6.451839
+          },
+          "baseline_roll10": {
+            "mae": 4.806252,
+            "rmse": 6.204357
+          },
+          "ridge": {
+            "mae": 4.812168,
+            "rmse": 6.181935
+          },
+          "random_forest": {
+            "mae": 4.835903,
+            "rmse": 6.210872
+          }
+        }
+      },
+      {
+        "fold": 2,
+        "n_train": 6027,
+        "n_val": 3619,
+        "val_start": "2025-01-02",
+        "val_end": "2025-01-25",
+        "metrics": {
+          "baseline_roll5": {
+            "mae": 4.720254,
+            "rmse": 6.224645
+          },
+          "baseline_roll10": {
+            "mae": 4.546505,
+            "rmse": 5.98171
+          },
+          "ridge": {
+            "mae": 4.541764,
+            "rmse": 5.931313
+          },
+          "random_forest": {
+            "mae": 4.576867,
+            "rmse": 5.974821
+          }
+        }
+      },
+      {
+        "fold": 3,
+        "n_train": 9646,
+        "n_val": 3602,
+        "val_start": "2025-01-26",
+        "val_end": "2025-02-23",
+        "metrics": {
+          "baseline_roll5": {
+            "mae": 4.888895,
+            "rmse": 6.433592
+          },
+          "baseline_roll10": {
+            "mae": 4.768878,
+            "rmse": 6.217738
+          },
+          "ridge": {
+            "mae": 4.731197,
+            "rmse": 6.155745
+          },
+          "random_forest": {
+            "mae": 4.769223,
+            "rmse": 6.181101
+          }
+        }
+      },
+      {
+        "fold": 4,
+        "n_train": 13248,
+        "n_val": 3769,
+        "val_start": "2025-02-24",
+        "val_end": "2025-03-19",
+        "metrics": {
+          "baseline_roll5": {
+            "mae": 4.928098,
+            "rmse": 6.533004
+          },
+          "baseline_roll10": {
+            "mae": 4.808756,
+            "rmse": 6.38187
+          },
+          "ridge": {
+            "mae": 4.772327,
+            "rmse": 6.303658
+          },
+          "random_forest": {
+            "mae": 4.769201,
+            "rmse": 6.301415
+          }
+        }
+      },
+      {
+        "fold": 5,
+        "n_train": 17017,
+        "n_val": 3915,
+        "val_start": "2025-03-20",
+        "val_end": "2025-04-13",
+        "metrics": {
+          "baseline_roll5": {
+            "mae": 5.082146,
+            "rmse": 6.71015
+          },
+          "baseline_roll10": {
+            "mae": 4.955658,
+            "rmse": 6.52062
+          },
+          "ridge": {
+            "mae": 4.937278,
+            "rmse": 6.432151
+          },
+          "random_forest": {
+            "mae": 4.946281,
+            "rmse": 6.44134
+          }
+        }
+      }
+    ],
+    "mean": {
+      "baseline_roll5": {
+        "mae": 4.914175,
+        "rmse": 6.470646
+      },
+      "baseline_roll10": {
+        "mae": 4.77721,
+        "rmse": 6.261259
+      },
+      "ridge": {
+        "mae": 4.758947,
+        "rmse": 6.20096
+      },
+      "random_forest": {
+        "mae": 4.779495,
+        "rmse": 6.22191
+      }
+    }
+  },
+  "holdout_metrics": {
+    "baseline_roll5": {
+      "mae": 4.867053,
+      "rmse": 6.37595
+    },
+    "baseline_roll10": {
+      "mae": 4.716219,
+      "rmse": 6.181266
+    },
+    "ridge": {
+      "mae": 4.707856,
+      "rmse": 6.115036
+    },
+    "random_forest": {
+      "mae": 4.722942,
+      "rmse": 6.131666
+    }
+  },
+  "sklearn_version": "1.9.1",
+  "created": "2026-09-30"
+}

@@ -1,3 +1,6 @@
 -r requirements.txt
 pytest==8.4.2
 ruff==0.16.1
+# Training-only: the deployed app predicts from model/next_game_points.json
+# with plain numpy, so scikit-learn never needs to be installed on the host.
+scikit-learn==1.9.1
