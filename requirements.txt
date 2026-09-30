@@ -6,3 +6,4 @@ nba_api==1.10.2
 # numpy>=2.1.0 requirement (caught by Streamlit Cloud's strict uv resolver;
 # pip locally didn't re-verify an already-installed numpy and let it slide).
 numpy>=2.1.0
+statsmodels==0.14.6
