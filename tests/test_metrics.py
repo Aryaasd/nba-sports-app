@@ -78,6 +78,21 @@ def test_parse_and_sort_game_log_orders_ascending(fake_game_log_df):
     assert result.iloc[0]["GAME_DATE"] == pd.Timestamp("2023-10-24")
 
 
+def test_parse_and_sort_game_log_iso_dates_with_date_format_none():
+    # PlayerGameLogs (league-wide) returns ISO timestamps, not "OCT 24, 2023".
+    df = pd.DataFrame(
+        {"GAME_DATE": ["2025-06-22T00:00:00", "2024-10-22T00:00:00", "2025-01-15T00:00:00"], "PTS": [1, 2, 3]}
+    )
+    result = metrics.parse_and_sort_game_log(df, date_format=None)
+    assert pd.api.types.is_datetime64_any_dtype(result["GAME_DATE"])
+    assert list(result["GAME_DATE"]) == [
+        pd.Timestamp("2024-10-22"),
+        pd.Timestamp("2025-01-15"),
+        pd.Timestamp("2025-06-22"),
+    ]
+    assert list(result["PTS"]) == [2, 3, 1]
+
+
 def test_parse_and_sort_game_log_empty_df_safe():
     empty = pd.DataFrame(columns=["GAME_DATE", "PTS"])
     result = metrics.parse_and_sort_game_log(empty)

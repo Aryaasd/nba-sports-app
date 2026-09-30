@@ -4,6 +4,7 @@ import streamlit as st
 import charts
 import data
 import metrics
+import sample_data_loader
 from insights import absence, defense_tiers, hot_hand, shot_chart
 
 st.set_page_config(page_title="NBA Sports App", layout="wide")
@@ -12,6 +13,10 @@ st.title("NBA Sports App")
 
 page = st.sidebar.radio("Navigate", ["Home", "Compare Players", "Insights"])
 
+SAMPLE_LABEL = (
+    f"{' / '.join(sample_data_loader.SAMPLE_PLAYERS.values())}, {sample_data_loader.SAMPLE_SEASON}"
+)
+
 
 @st.cache_data(ttl=data.CACHE_TTL_SECONDS)
 def _cached_hot_hand_summary(shot_df: pd.DataFrame, n_permutations: int = 2000, seed: int = 42) -> dict:
@@ -19,6 +24,47 @@ def _cached_hot_hand_summary(shot_df: pd.DataFrame, n_permutations: int = 2000, 
     # ~1s for 2000 shuffles it's worth caching same as a network fetch -- Streamlit
     # reruns this whole script on every widget interaction on the Insights page.
     return hot_hand.summarize_hot_hand(shot_df, n_permutations=n_permutations, seed=seed)
+
+
+def _sidebar_player_select(label: str, options: list[str], key: str, default: str) -> str:
+    # Default via session_state, not `index=`: Streamlit warns when a widget has a
+    # non-default index *and* a callback (the sample-data button) writes its key.
+    if key not in st.session_state:
+        st.session_state[key] = options[metrics.safe_selectbox_index(options, default)]
+    return st.sidebar.selectbox(label, options, key=key)
+
+
+def _select_sample_data(season_key: str, player_keys: list[str]) -> None:
+    # Must run as an on_click callback: writing a widget's session_state after
+    # the widget has rendered in the same run raises StreamlitAPIException.
+    st.session_state[season_key] = sample_data_loader.SAMPLE_SEASON
+    for key, name in zip(player_keys, sample_data_loader.SAMPLE_PLAYERS.values()):
+        st.session_state[key] = name
+
+
+def _stop_with_fetch_error(exc: Exception, season_key: str, player_keys: list[str]) -> None:
+    st.error(
+        "Couldn't load live NBA data for this selection -- the NBA stats API didn't "
+        "respond. It blocks many cloud servers, including the one this demo is hosted on."
+    )
+    st.button(
+        f"Explore with cached sample data ({SAMPLE_LABEL})",
+        on_click=_select_sample_data,
+        args=(season_key, player_keys),
+        type="primary",
+    )
+    with st.expander("Error details"):
+        st.code(str(exc), language=None)
+    st.stop()
+
+
+def _show_sample_banner(*used_sample_flags: bool) -> None:
+    if any(used_sample_flags):
+        st.warning(
+            f"Showing cached sample data ({SAMPLE_LABEL}) -- the live NBA stats API is "
+            "unreachable from this host right now. Other selections show an error "
+            "rather than made-up data."
+        )
 
 
 try:
@@ -73,25 +119,22 @@ elif page == "Compare Players":
     st.subheader("Compare Two Players")
 
     seasons = metrics.get_recent_seasons()
-    season = st.sidebar.selectbox("Season", seasons, index=0)
+    season = st.sidebar.selectbox("Season", seasons, index=0, key="compare_season")
 
-    player1_name = st.sidebar.selectbox(
-        "Player 1", player_names, index=metrics.safe_selectbox_index(player_names, "LeBron James")
-    )
-    player2_name = st.sidebar.selectbox(
-        "Player 2", player_names, index=metrics.safe_selectbox_index(player_names, "Kevin Durant")
-    )
+    player1_name = _sidebar_player_select("Player 1", player_names, "compare_player1", "LeBron James")
+    player2_name = _sidebar_player_select("Player 2", player_names, "compare_player2", "Kevin Durant")
 
     player1_id = metrics.get_player_id(player_index, player1_name)
     player2_id = metrics.get_player_id(player_index, player2_name)
 
     try:
-        df1 = data.fetch_player_game_log(player1_id, season)
-        df2 = data.fetch_player_game_log(player2_id, season)
-        advanced_df = data.fetch_advanced_stats(season)
+        df1, sample1 = data.fetch_player_game_log(player1_id, season)
+        df2, sample2 = data.fetch_player_game_log(player2_id, season)
+        advanced_df, sample_advanced = data.fetch_advanced_stats(season)
     except data.PlayerStatsFetchError as exc:
-        st.error(str(exc))
-        st.stop()
+        _stop_with_fetch_error(exc, "compare_season", ["compare_player1", "compare_player2"])
+
+    _show_sample_banner(sample1, sample2, sample_advanced)
 
     if df1.empty or df2.empty:
         st.error("Could not fetch stats for one or both players this season.")
@@ -150,26 +193,33 @@ elif page == "Insights":
 
     seasons = metrics.get_recent_seasons()
     season = st.sidebar.selectbox("Season", seasons, index=0, key="insights_season")
-    player_name = st.sidebar.selectbox(
-        "Player",
-        player_names,
-        index=metrics.safe_selectbox_index(player_names, "LeBron James"),
-        key="insights_player",
-    )
+    player_name = _sidebar_player_select("Player", player_names, "insights_player", "LeBron James")
     player_id = metrics.get_player_id(player_index, player_name)
 
     try:
-        game_log_df = data.fetch_player_game_log(player_id, season)
+        game_log_df, sample_log = data.fetch_player_game_log(player_id, season)
         all_teams = data.get_all_teams()
-        team_advanced_df = data.fetch_team_advanced_stats(season)
-        shot_df = data.fetch_shot_chart(player_id, season)
+        team_advanced_df, sample_team_stats = data.fetch_team_advanced_stats(season)
+        shot_df, sample_shots = data.fetch_shot_chart(player_id, season)
     except data.PlayerStatsFetchError as exc:
-        st.error(str(exc))
-        st.stop()
+        _stop_with_fetch_error(exc, "insights_season", ["insights_player"])
 
     if game_log_df.empty:
         st.error(f"No {season} game data for {player_name}.")
         st.stop()
+
+    # PlayerGameLog has no TEAM_ID column -- derive it from the player's own
+    # MATCHUP abbreviation instead (first token, before "vs."/"@").
+    own_abbr = defense_tiers.extract_own_team_abbreviation(game_log_df.iloc[0]["MATCHUP"])
+    team_id = metrics.build_abbreviation_to_team_id_index(all_teams).get(own_abbr)
+    team_game_dates, sample_dates, team_dates_error = [], False, None
+    if team_id:
+        try:
+            team_game_dates, sample_dates = data.fetch_team_game_dates(team_id, season)
+        except data.PlayerStatsFetchError as exc:
+            team_dates_error = str(exc)
+
+    _show_sample_banner(sample_log, sample_team_stats, sample_shots, sample_dates)
 
     tab_absence, tab_defense, tab_hot_hand, tab_shot_chart = st.tabs(
         ["Absence & Rest Impact", "Performance vs. Defense", "Hot Hand Fallacy", "Shot Chart"]
@@ -180,16 +230,8 @@ elif page == "Insights":
             "No free live injury-designation feed exists anywhere, so this measures "
             "**games missed and return-game performance** -- never *why* a game was missed."
         )
-        # PlayerGameLog has no TEAM_ID column -- derive it from the player's own
-        # MATCHUP abbreviation instead (first token, before "vs."/"@").
-        own_abbr = defense_tiers.extract_own_team_abbreviation(game_log_df.iloc[0]["MATCHUP"])
-        team_id = metrics.build_abbreviation_to_team_id_index(all_teams).get(own_abbr)
-
-        try:
-            team_game_dates = data.fetch_team_game_dates(team_id, season) if team_id else []
-        except data.PlayerStatsFetchError as exc:
-            st.error(str(exc))
-            team_game_dates = []
+        if team_dates_error:
+            st.error(team_dates_error)
 
         missed_dates = absence.find_missed_games(team_game_dates, game_log_df["GAME_DATE"].tolist())
         absence_gaps = absence.identify_absence_gaps(team_game_dates, missed_dates)

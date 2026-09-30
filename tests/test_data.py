@@ -1,5 +1,8 @@
+import time
+
 import pandas as pd
 import pytest
+import requests
 
 import data
 
@@ -9,6 +12,11 @@ def _no_sleep(monkeypatch):
     # Retries sleep with backoff between attempts -- skip the real delay so
     # the exception-wrapping tests (which exhaust all retries) stay fast.
     monkeypatch.setattr(data.time, "sleep", lambda _: None)
+
+
+@pytest.fixture(autouse=True)
+def _closed_circuit(monkeypatch):
+    monkeypatch.setattr(data, "_api_unreachable_until", 0.0)
 
 
 class _FakeGameLog:
@@ -107,12 +115,12 @@ def test_call_with_retries_succeeds_after_transient_failures():
 
     def flaky():
         calls["count"] += 1
-        if calls["count"] < 3:
+        if calls["count"] < data.MAX_ATTEMPTS:
             raise TimeoutError("simulated transient timeout")
         return "ok"
 
     assert data._call_with_retries(flaky) == "ok"
-    assert calls["count"] == 3
+    assert calls["count"] == data.MAX_ATTEMPTS
 
 
 def test_call_with_retries_raises_after_exhausting_attempts():
@@ -125,6 +133,96 @@ def test_call_with_retries_raises_after_exhausting_attempts():
     with pytest.raises(TimeoutError):
         data._call_with_retries(always_fails)
     assert calls["count"] == data.MAX_ATTEMPTS
+
+
+# --- circuit breaker ------------------------------------------------------------
+
+def test_circuit_opens_after_network_failures_and_next_call_skips_the_network():
+    calls = {"count": 0}
+
+    def blocked_host():
+        calls["count"] += 1
+        raise requests.exceptions.ReadTimeout("simulated cloud-IP block")
+
+    with pytest.raises(requests.exceptions.ReadTimeout):
+        data._call_with_retries(blocked_host)
+    assert calls["count"] == data.MAX_ATTEMPTS
+    assert data._api_unreachable_until > time.monotonic() + data.CIRCUIT_COOLDOWN_SECONDS - 60
+
+    with pytest.raises(data.CircuitOpenError):
+        data._call_with_retries(blocked_host)
+    assert calls["count"] == data.MAX_ATTEMPTS  # fail-fast: never reached the network again
+
+
+def test_non_network_error_does_not_open_circuit():
+    def malformed_response():
+        raise KeyError("resultSets")
+
+    with pytest.raises(KeyError):
+        data._call_with_retries(malformed_response)
+    assert data._call_with_retries(lambda: "ok") == "ok"
+
+
+def test_circuit_closes_after_cooldown(monkeypatch):
+    monkeypatch.setattr(data, "_api_unreachable_until", time.monotonic() - 1)
+    assert data._call_with_retries(lambda: "ok") == "ok"
+
+
+def test_open_circuit_surfaces_as_fetch_error(monkeypatch):
+    monkeypatch.setattr(data, "_api_unreachable_until", time.monotonic() + 600)
+    with pytest.raises(data.PlayerStatsFetchError, match="skipping live calls"):
+        data._fetch_player_game_log_uncached(2544, "2023-24")
+
+
+# --- sample-data fallback --------------------------------------------------------
+
+def _live_fails(*args):
+    raise data.PlayerStatsFetchError("simulated live failure")
+
+
+def test_fallback_not_used_when_live_fetch_succeeds():
+    sample_calls = []
+    result = data._with_sample_fallback(lambda *a: "live", lambda *a: sample_calls.append(a), 2544, "2025-26")
+    assert result == ("live", False)
+    assert sample_calls == []
+
+
+def test_fallback_returns_sample_for_bundled_selection():
+    assert data._with_sample_fallback(_live_fails, lambda *a: "sample", 2544, "2025-26") == ("sample", True)
+
+
+def test_fallback_still_raises_for_non_bundled_selection():
+    # The core promise: an arbitrary selection is never answered with made-up data.
+    with pytest.raises(data.PlayerStatsFetchError, match="simulated live failure"):
+        data._with_sample_fallback(_live_fails, lambda *a: None, 203999, "2025-26")
+
+
+@pytest.fixture
+def _fresh_cache():
+    data.fetch_player_game_log.clear()
+    yield
+    data.fetch_player_game_log.clear()
+
+
+def test_public_fetcher_falls_back_to_bundled_snapshot(monkeypatch, _fresh_cache):
+    monkeypatch.setattr(data.playergamelog, "PlayerGameLog", _RaisesOnInit)
+    df, used_sample = data.fetch_player_game_log(2544, "2025-26")
+    assert used_sample is True
+    assert list(df.columns) == data.GAME_LOG_COLUMNS
+    assert len(df) > 20
+
+
+def test_public_fetcher_raises_for_non_bundled_selection(monkeypatch, _fresh_cache):
+    monkeypatch.setattr(data.playergamelog, "PlayerGameLog", _RaisesOnInit)
+    with pytest.raises(data.PlayerStatsFetchError):
+        data.fetch_player_game_log(2544, "2023-24")
+
+
+def test_public_fetcher_live_success_flags_no_sample(monkeypatch, _fresh_cache):
+    monkeypatch.setattr(data.playergamelog, "PlayerGameLog", _FakeGameLog)
+    df, used_sample = data.fetch_player_game_log(2544, "2025-26")
+    assert used_sample is False
+    assert len(df) == 2
 
 
 # --- get_all_players --------------------------------------------------------
@@ -233,3 +331,45 @@ def test_fetch_shot_chart_uncached_wraps_exception(monkeypatch):
     monkeypatch.setattr(data.shotchartdetail, "ShotChartDetail", _RaisesOnInit)
     with pytest.raises(data.PlayerStatsFetchError):
         data._fetch_shot_chart_uncached(2544, "2023-24")
+
+
+# --- fetch_league_game_logs (model training data) ---------------------------------
+
+class _FakeLeagueGameLogs:
+    last_kwargs: dict = {}
+
+    def __init__(self, **kwargs):
+        _FakeLeagueGameLogs.last_kwargs = kwargs
+
+    def get_data_frames(self):
+        df = pd.DataFrame(
+            {
+                "SEASON_YEAR": ["2024-25"] * 3,
+                "PLAYER_ID": [1, 2, 1],
+                "PLAYER_NAME": ["A", "B", "A"],
+                "TEAM_ID": [10, 20, 10],
+                "GAME_ID": ["0022400002", "0022400001", "0022400001"],
+                "GAME_DATE": ["2024-10-24T00:00:00", "2024-10-22T00:00:00", "2024-10-22T00:00:00"],
+                "MATCHUP": ["AAA @ BBB", "BBB vs. AAA", "AAA @ BBB"],
+                "MIN": [30.5, 28.25, 31.0],
+                "PTS": [20, 15, 18],
+                "REB": [5, 7, 4],
+                "AST": [3, 2, 6],
+            }
+        )
+        return [df]
+
+
+def test_fetch_league_game_logs_regular_season_iso_dates_sorted(monkeypatch):
+    monkeypatch.setattr(data.playergamelogs, "PlayerGameLogs", _FakeLeagueGameLogs)
+    result = data.fetch_league_game_logs("2024-25")
+    assert _FakeLeagueGameLogs.last_kwargs["season_type_nullable"] == "Regular Season"
+    assert list(result.columns) == data.LEAGUE_GAME_LOG_COLUMNS
+    assert pd.api.types.is_datetime64_any_dtype(result["GAME_DATE"])
+    assert result["GAME_DATE"].is_monotonic_increasing
+
+
+def test_fetch_league_game_logs_wraps_exception(monkeypatch):
+    monkeypatch.setattr(data.playergamelogs, "PlayerGameLogs", _RaisesOnInit)
+    with pytest.raises(data.PlayerStatsFetchError):
+        data.fetch_league_game_logs("2024-25")

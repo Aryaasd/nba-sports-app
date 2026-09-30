@@ -73,12 +73,18 @@ def safe_selectbox_index(options: list[str], preferred: str, fallback: int = 0) 
         return fallback
 
 
-def parse_and_sort_game_log(df: pd.DataFrame, date_col: str = "GAME_DATE") -> pd.DataFrame:
-    """Parse `date_col` to datetime and return the df sorted ascending by it."""
+def parse_and_sort_game_log(
+    df: pd.DataFrame, date_col: str = "GAME_DATE", date_format: str | None = "%b %d, %Y"
+) -> pd.DataFrame:
+    """Parse `date_col` to datetime and return the df sorted ascending by it.
+
+    The default format matches the singular game-log endpoints ("OCT 24, 2023");
+    pass `date_format=None` for the league-wide endpoint's ISO timestamps.
+    """
     if df.empty:
         return df
     df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col], format="%b %d, %Y")
+    df[date_col] = pd.to_datetime(df[date_col], format=date_format)
     return df.sort_values(date_col).reset_index(drop=True)
 
 
