@@ -199,9 +199,9 @@ def test_fallback_still_raises_for_non_bundled_selection():
 
 @pytest.fixture
 def _fresh_cache():
-    data.fetch_player_game_log.clear()
+    data.st.cache_data.clear()
     yield
-    data.fetch_player_game_log.clear()
+    data.st.cache_data.clear()
 
 
 def test_public_fetcher_falls_back_to_bundled_snapshot(monkeypatch, _fresh_cache):
@@ -219,6 +219,16 @@ def test_public_fetcher_raises_for_non_bundled_selection(monkeypatch, _fresh_cac
 
 
 def test_public_fetcher_live_success_flags_no_sample(monkeypatch, _fresh_cache):
+    monkeypatch.setattr(data.playergamelog, "PlayerGameLog", _FakeGameLog)
+    df, used_sample = data.fetch_player_game_log(2544, "2025-26")
+    assert used_sample is False
+    assert len(df) == 2
+
+
+def test_fallback_is_not_cached_so_live_data_returns_when_the_api_recovers(monkeypatch, _fresh_cache):
+    monkeypatch.setattr(data.playergamelog, "PlayerGameLog", _RaisesOnInit)
+    assert data.fetch_player_game_log(2544, "2025-26")[1] is True
+
     monkeypatch.setattr(data.playergamelog, "PlayerGameLog", _FakeGameLog)
     df, used_sample = data.fetch_player_game_log(2544, "2025-26")
     assert used_sample is False

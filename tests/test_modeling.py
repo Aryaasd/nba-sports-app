@@ -94,6 +94,26 @@ def test_engineer_features_drops_rows_without_full_history():
     assert result["GAME_DATE"].is_monotonic_increasing
 
 
+def test_engineer_features_drops_rows_with_missing_target():
+    log = _game_log(PTS_A, player_id=1)
+    log["PTS"] = log["PTS"].astype(float)
+    missing_date = log.loc[12, "GAME_DATE"]  # its features (games 2-11) are all present
+    log.loc[12, "PTS"] = np.nan
+
+    result = modeling.engineer_features(log)
+
+    assert missing_date not in set(result["GAME_DATE"])
+    assert not result[modeling.TARGET_COLUMN].isna().any()
+
+
+def test_engineer_features_rejects_duplicate_player_dates():
+    log = pd.concat([_game_log(PTS_A, player_id=1), _game_log(PTS_B, player_id=2)], ignore_index=True)
+    log = pd.concat([log, log[log["PLAYER_ID"] == 2].iloc[[3]]], ignore_index=True)
+
+    with pytest.raises(ValueError, match=r"PLAYER_ID\(s\): \[2\]"):
+        modeling.engineer_features(log)
+
+
 def test_engineer_features_requires_player_id():
     with pytest.raises(ValueError, match="PLAYER_ID"):
         modeling.engineer_features(_game_log(PTS_A))
@@ -127,6 +147,31 @@ def test_build_next_game_row_none_with_too_few_games():
     assert modeling.build_next_game_row(_game_log(PTS_A[:needed]), days_rest=1, is_home=True) is not None
 
 
+@pytest.mark.parametrize("missing_position, expect_row", [(-3, False), (-10, False), (-11, True)])
+def test_build_next_game_row_none_when_window_has_missing_stat(missing_position, expect_row):
+    log = _game_log(PTS_A)
+    log["REB"] = log["REB"].astype(float)
+    log.loc[log.index[missing_position], "REB"] = np.nan
+
+    served = modeling.build_next_game_row(log, days_rest=1, is_home=True)
+    assert (served is not None) == expect_row
+
+    # Training agrees: the appended game only gets a feature row when its full window is clean.
+    next_date = log["GAME_DATE"].iloc[-1] + pd.Timedelta(days=2)
+    next_game = pd.DataFrame(
+        {
+            "GAME_DATE": [next_date],
+            "MATCHUP": ["LAL vs. NYK"],
+            "PTS": [20],
+            "REB": [5.0],
+            "AST": [5],
+            "MIN": [30],
+        }
+    )
+    appended = pd.concat([log, next_game], ignore_index=True).assign(PLAYER_ID=1)
+    assert (next_date in set(modeling.engineer_features(appended)["GAME_DATE"])) == expect_row
+
+
 def test_predict_linear_matches_manual_dot_product():
     rng = np.random.default_rng(0)
     columns = modeling.FEATURE_COLUMNS
@@ -158,6 +203,18 @@ def test_player_backtest_columns_and_alignment():
         assert row["Model"] == pytest.approx(1.0 + np.mean(PTS_A[game - 10 : game]))
         assert row["Baseline (5-game avg)"] == pytest.approx(np.mean(PTS_A[game - 5 : game]))
         assert row["Baseline (10-game avg)"] == pytest.approx(np.mean(PTS_A[game - 10 : game]))
+
+
+@pytest.mark.parametrize(
+    "comparison, expected_start",
+    [
+        ({"mae_improvement": 0.159, "ci_low": 0.135, "ci_high": 0.183}, "is better by 0.16 pts"),
+        ({"mae_improvement": 0.008, "ci_low": -0.006, "ci_high": 0.021}, "is statistically tied"),
+        ({"mae_improvement": -0.2, "ci_low": -0.3, "ci_high": -0.1}, "is worse by 0.20 pts"),
+    ],
+)
+def test_describe_comparison_follows_the_interval_not_the_point_estimate(comparison, expected_start):
+    assert modeling.describe_comparison(comparison).startswith(expected_start)
 
 
 def test_player_backtest_empty_log_is_empty():

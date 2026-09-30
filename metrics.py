@@ -31,6 +31,19 @@ def get_current_season(today: dt.date | None = None) -> str:
     return f"{start_year}-{str(start_year + 1)[-2:]}"
 
 
+def get_default_season(today: dt.date | None = None) -> str:
+    """The season the app opens on: the current one, except in October.
+
+    get_current_season rolls over on October 1, but regular-season games don't start
+    until late October -- opening on a season with no games would greet every visitor
+    with "no data", so October keeps the just-finished season as the default.
+    """
+    today = today or dt.date.today()
+    if today.month == 10:
+        return get_current_season(dt.date(today.year, 9, 30))
+    return get_current_season(today)
+
+
 def get_recent_seasons(n: int = 5, today: dt.date | None = None) -> list[str]:
     """Return the `n` most recent season strings, most-recent-first."""
     current = get_current_season(today)
@@ -85,7 +98,7 @@ def parse_and_sort_game_log(
         return df
     df = df.copy()
     df[date_col] = pd.to_datetime(df[date_col], format=date_format)
-    return df.sort_values(date_col).reset_index(drop=True)
+    return df.sort_values(date_col, kind="mergesort").reset_index(drop=True)
 
 
 def _index_of(*candidates) -> pd.Index | None:

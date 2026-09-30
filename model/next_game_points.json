@@ -209,6 +209,24 @@
       "rmse": 6.131666
     }
   },
+  "holdout_comparisons": {
+    "baseline_roll5": {
+      "mae_improvement": 0.159197,
+      "ci_low": 0.134591,
+      "ci_high": 0.18334
+    },
+    "baseline_roll10": {
+      "mae_improvement": 0.008362,
+      "ci_low": -0.005686,
+      "ci_high": 0.021429
+    }
+  },
+  "bootstrap": {
+    "n_boot": 2000,
+    "unit": "player",
+    "seed": 42,
+    "level": 0.95
+  },
   "sklearn_version": "1.9.1",
   "created": "2026-09-30"
 }

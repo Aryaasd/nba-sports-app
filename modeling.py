@@ -63,7 +63,8 @@ def add_rest_features(df: pd.DataFrame) -> pd.DataFrame:
 def engineer_features(game_log_df: pd.DataFrame) -> pd.DataFrame:
     """Model-ready rows: identifiers, FEATURE_COLUMNS, and the PTS target.
 
-    Rows without a full feature history (each player's first 10 games) are dropped.
+    Rows without a full feature history (each player's first 10 games) or without a target
+    are dropped.
     """
     if "PLAYER_ID" not in game_log_df.columns:
         raise ValueError("engineer_features needs a PLAYER_ID column (use df.assign(PLAYER_ID=...))")
@@ -71,8 +72,14 @@ def engineer_features(game_log_df: pd.DataFrame) -> pd.DataFrame:
     # An empty log arrives with GAME_DATE unparsed (parse_and_sort_game_log skips empties).
     if game_log_df.empty:
         return pd.DataFrame(columns=output_columns)
+    # Two rows on one player-date would put one game's stats in the other's "previous games"
+    # window. The real data has none, so fail loudly instead of guessing which row to keep.
+    duplicated = game_log_df.duplicated(["PLAYER_ID", "GAME_DATE"], keep=False)
+    if duplicated.any():
+        player_ids = sorted(game_log_df.loc[duplicated, "PLAYER_ID"].unique().tolist())
+        raise ValueError(f"Duplicate (PLAYER_ID, GAME_DATE) rows for PLAYER_ID(s): {player_ids}")
     df = add_rest_features(add_rolling_features(game_log_df))
-    df = df.dropna(subset=FEATURE_COLUMNS)[output_columns]
+    df = df.dropna(subset=[*FEATURE_COLUMNS, TARGET_COLUMN])[output_columns]
     return df.sort_values(["GAME_DATE", "PLAYER_ID"], kind="mergesort").reset_index(drop=True)
 
 
@@ -96,11 +103,15 @@ def build_next_game_row(game_log_df: pd.DataFrame, days_rest: int, is_home: bool
 
     No shift here: the next game comes after every logged game, so each rolling feature is
     the mean of the last w played games -- exactly what engineer_features would compute for
-    that game once it's appended. None if the log is shorter than the longest window.
+    that game once it's appended. None if the log is shorter than the longest window, or if
+    any game in that window has a missing stat -- training requires full windows, so serving
+    must never average 4 games and call it a 5-game average.
     """
     if len(game_log_df) < max(ROLL_WINDOWS):
         return None
     log = game_log_df.sort_values("GAME_DATE", kind="mergesort")
+    if log[list(ROLL_STATS)].iloc[-max(ROLL_WINDOWS) :].isna().any().any():
+        return None
     row = {
         f"{stat}_roll{w}": float(log[stat].astype(float).iloc[-w:].mean())
         for w in ROLL_WINDOWS
@@ -124,3 +135,18 @@ def player_backtest(game_log_df: pd.DataFrame, model: dict) -> pd.DataFrame:
             "Baseline (10-game avg)": baseline_predictions(features, STRONG_BASELINE_COLUMN),
         }
     )
+
+
+def describe_comparison(comparison: dict) -> str:
+    """Verdict phrase for one entry of the model JSON's `holdout_comparisons`.
+
+    Driven by the bootstrap CI, not the point estimate: an interval that includes zero
+    is a tie however the point estimate leans.
+    """
+    gain, low, high = comparison["mae_improvement"], comparison["ci_low"], comparison["ci_high"]
+    interval = f"95% CI {low:+.3f} to {high:+.3f}"
+    if low > 0:
+        return f"is better by {gain:.2f} pts ({interval})"
+    if high < 0:
+        return f"is worse by {-gain:.2f} pts ({interval})"
+    return f"is statistically tied ({gain:+.3f} pts, {interval} includes zero)"

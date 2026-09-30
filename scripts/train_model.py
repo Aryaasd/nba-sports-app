@@ -5,8 +5,9 @@ Run from the repo root:  .venv/bin/python -m scripts.train_model
 Trains on one full season with date-block cross-validation, then scores on the entire
 following season, which the model never saw in any form. The Ridge is what ships (to
 model/next_game_points.json, read by the app via modeling.load_linear_model); the random
-forest is fit only to show whether a nonlinear model buys anything over it. The verdict
-line is printed as-is either way: "doesn't beat the baseline" is a legitimate result.
+forest is fit only to show whether a nonlinear model buys anything over it. The verdict is
+driven by player-bootstrap confidence intervals, not point estimates, and is printed as-is
+either way: "doesn't beat the baseline" is a legitimate result.
 """
 from __future__ import annotations
 
@@ -63,29 +64,48 @@ def _folds_table(cv: dict) -> str:
     return "\n".join(lines)
 
 
-def _relative(model_mae: float, baseline_mae: float) -> str:
-    pct = 100 * (baseline_mae - model_mae) / baseline_mae
-    return f"{abs(pct):.1f}% {'lower than' if pct > 0 else 'higher than'}"
+def _outcome(comparison: dict[str, float]) -> str:
+    """"better" / "worse" only when the whole CI clears zero; a CI that includes zero is a tie."""
+    if comparison["ci_low"] > 0:
+        return "better"
+    if comparison["ci_high"] < 0:
+        return "worse"
+    return "tie"
 
 
-def _verdict(holdout: dict) -> str:
-    ridge = holdout["ridge"]["mae"]
-    short, long = holdout["baseline_roll5"]["mae"], holdout["baseline_roll10"]["mae"]
-    connector = "but only" if ridge < long < short else "and"
-    head = (
-        f"Verdict: on the unseen {HOLDOUT_SEASON} season, Ridge's MAE ({ridge:.3f}) is "
-        f"{_relative(ridge, short)} the 5-game average ({short:.3f}) {connector} "
-        f"{_relative(ridge, long)} a plain 10-game average ({long:.3f})"
-    )
-    if ridge >= min(short, long):
-        return f"{head} -- a naive average does as well or better, so the model adds nothing."
-    window_share = (short - long) / (short - ridge)
-    if window_share >= 0.5:
-        return (
-            f"{head} -- a longer window alone captures {window_share:.0%} of the gain over the 5-game "
-            "average, so the other features add little beyond it."
+def _comparisons_table(comparisons: dict[str, dict[str, float]]) -> str:
+    results = {"better": "Ridge better", "worse": "Ridge worse", "tie": "tie (CI includes 0)"}
+    lines = [
+        f"| Ridge vs. | MAE improvement (pts) | {model_training.BOOTSTRAP_LEVEL:.0%} CI | Result |",
+        "|---|---:|---|---|",
+    ]
+    for name, c in comparisons.items():
+        lines.append(
+            f"| {MODEL_LABELS[name]} | {c['mae_improvement']:+.3f} "
+            f"| [{c['ci_low']:+.3f}, {c['ci_high']:+.3f}] | {results[_outcome(c)]} |"
         )
-    return f"{head} -- most of the gain comes from the features, not just the longer window."
+    return "\n".join(lines)
+
+
+def _verdict(comparisons: dict[str, dict[str, float]]) -> str:
+    phrases = {"better": "beats", "worse": "is worse than", "tie": "is statistically indistinguishable from"}
+    short, long = comparisons["baseline_roll5"], comparisons["baseline_roll10"]
+    connector = "and" if _outcome(short) == _outcome(long) else "but"
+
+    def detail(c):
+        level = model_training.BOOTSTRAP_LEVEL
+        return f"{c['mae_improvement']:+.3f} pts, {level:.0%} CI [{c['ci_low']:+.3f}, {c['ci_high']:+.3f}]"
+
+    tails = {
+        "better": "the features add real signal beyond a longer window.",
+        "worse": "a plain 10-game average is more accurate, so the model doesn't earn its complexity.",
+        "tie": "the features add nothing measurable beyond a longer window.",
+    }
+    return (
+        f"Verdict: on the unseen {HOLDOUT_SEASON} season, Ridge {phrases[_outcome(short)]} the 5-game "
+        f"average ({detail(short)}) {connector} {phrases[_outcome(long)]} a plain 10-game average "
+        f"({detail(long)}) -- {tails[_outcome(long)]}"
+    )
 
 
 def main() -> None:
@@ -107,6 +127,8 @@ def main() -> None:
     holdout_features = modeling.engineer_features(data.fetch_league_game_logs(HOLDOUT_SEASON))
     print(f"  {len(holdout_features)} holdout rows")
     holdout = model_training.evaluate_on_holdout({"ridge": ridge, "random_forest": forest}, holdout_features)
+    holdout_X = holdout_features[modeling.FEATURE_COLUMNS]
+    comparisons = model_training.compare_to_baselines(ridge.predict(holdout_X), holdout_features)
 
     exported = model_training.export_linear_model(
         ridge,
@@ -120,13 +142,14 @@ def main() -> None:
             "cv_n_splits": N_SPLITS,
             "cv_metrics": cv,
             "holdout_metrics": holdout,
+            "holdout_comparisons": comparisons,
+            "bootstrap": dict(model_training.BOOTSTRAP_SETTINGS),
             "sklearn_version": sklearn.__version__,
             "created": dt.date.today().isoformat(),
         },
     )
     exported = _round_floats(exported)
     # The file that ships must reproduce the model that was just evaluated, rounding included.
-    holdout_X = holdout_features[modeling.FEATURE_COLUMNS]
     max_gap = np.max(np.abs(modeling.predict_linear(exported, holdout_X) - ridge.predict(holdout_X)))
     if max_gap > 1e-3:
         raise RuntimeError(f"Exported model drifts from the fitted pipeline by {max_gap:.2e} points")
@@ -139,7 +162,12 @@ def main() -> None:
     print(f"\n### CV folds (MAE)\n\n{_folds_table(cv)}")
     print(f"\n### Holdout: full {HOLDOUT_SEASON} season, never seen in training\n")
     print(_metrics_table(holdout))
-    print(f"\n{_verdict(holdout)}")
+    print(
+        f"\nRidge's holdout MAE improvement over each baseline, with a player-clustered bootstrap CI "
+        f"({model_training.BOOTSTRAP_N} resamples of whole players):\n"
+    )
+    print(_comparisons_table(comparisons))
+    print(f"\n{_verdict(comparisons)}")
     print(f"\nWrote {modeling.DEFAULT_MODEL_PATH} in {time.perf_counter() - started:.1f}s")
 
 

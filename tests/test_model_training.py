@@ -24,8 +24,17 @@ def _synthetic_features(n_dates=60, players_per_date=5, seed=0):
         rng.normal(loc=15, scale=5, size=(n, len(modeling.FEATURE_COLUMNS))), columns=modeling.FEATURE_COLUMNS
     )
     df["GAME_DATE"] = np.repeat(pd.date_range("2024-10-22", periods=n_dates, freq="D"), players_per_date)
+    df["PLAYER_ID"] = np.tile(np.arange(players_per_date), n_dates)
     df["PTS"] = 0.6 * df["PTS_roll10"] + 0.3 * df["PTS_roll5"] + rng.normal(scale=4, size=n)
     return df
+
+
+def _player_level_points(n_players=60, games_per_player=20, seed=0):
+    """(y, groups, rng): points with a per-player level, so a player's games are correlated."""
+    rng = np.random.default_rng(seed)
+    groups = np.repeat(np.arange(n_players), games_per_player)
+    y = rng.normal(12, 6, size=n_players)[groups] + rng.normal(0, 5, size=len(groups))
+    return y, groups, rng
 
 
 def test_cv_splits_never_train_on_or_after_validation_dates(shuffled_dates):
@@ -96,3 +105,90 @@ def test_evaluate_on_holdout_always_includes_both_baselines():
         ("baseline_roll10", modeling.STRONG_BASELINE_COLUMN),
     ]:
         assert result[name]["mae"] == pytest.approx(np.mean(np.abs(holdout["PTS"] - holdout[column])))
+
+
+def test_bootstrap_is_deterministic_for_a_seed():
+    y, groups, rng = _player_level_points()
+    model, baseline = y + rng.normal(0, 4, len(y)), y + rng.normal(0, 4.5, len(y))
+
+    first = model_training.bootstrap_mae_improvement(y, model, baseline, groups, n_boot=500, seed=7)
+    again = model_training.bootstrap_mae_improvement(y, model, baseline, groups, n_boot=500, seed=7)
+    other = model_training.bootstrap_mae_improvement(y, model, baseline, groups, n_boot=500, seed=8)
+
+    assert first == again
+    assert (first["ci_low"], first["ci_high"]) != (other["ci_low"], other["ci_high"])
+
+
+def test_bootstrap_ci_contains_point_estimate():
+    y, groups, rng = _player_level_points()
+    model, baseline = y + rng.normal(0, 4, len(y)), y + rng.normal(0, 4.2, len(y))
+
+    result = model_training.bootstrap_mae_improvement(y, model, baseline, groups)
+
+    expected = np.mean(np.abs(y - baseline)) - np.mean(np.abs(y - model))
+    assert result["mae_improvement"] == pytest.approx(expected)
+    assert result["ci_low"] <= result["mae_improvement"] <= result["ci_high"]
+    assert set(result) == {"mae_improvement", "ci_low", "ci_high"}
+
+
+def test_bootstrap_identical_model_is_zero_with_zero_width_ci():
+    y, groups, rng = _player_level_points()
+    same = y + rng.normal(0, 4, len(y))
+
+    result = model_training.bootstrap_mae_improvement(y, same, same.copy(), groups)
+
+    assert result == {"mae_improvement": 0.0, "ci_low": 0.0, "ci_high": 0.0}
+
+
+def test_bootstrap_clearly_better_model_has_ci_above_zero():
+    y, groups, rng = _player_level_points()
+    model, baseline = y + rng.normal(0, 1, len(y)), y + rng.normal(0, 5, len(y))
+
+    result = model_training.bootstrap_mae_improvement(y, model, baseline, groups)
+
+    assert result["mae_improvement"] > 0
+    assert result["ci_low"] > 0
+
+
+def test_bootstrap_resamples_whole_players_not_rows():
+    # With a single player, every cluster resample is that same player, so the interval
+    # collapses to the point estimate. A row-level bootstrap would spread it out.
+    y, _, rng = _player_level_points(n_players=1, games_per_player=200)
+    model, baseline = y + rng.normal(0, 2, len(y)), y + rng.normal(0, 4, len(y))
+
+    result = model_training.bootstrap_mae_improvement(y, model, baseline, np.zeros(len(y)))
+
+    assert result["ci_low"] == pytest.approx(result["mae_improvement"])
+    assert result["ci_high"] == pytest.approx(result["mae_improvement"])
+
+
+def test_export_carries_holdout_comparisons_and_bootstrap_settings():
+    features = _synthetic_features()
+    X, y = features[modeling.FEATURE_COLUMNS], features["PTS"]
+    pipeline = model_training.build_ridge_pipeline().fit(X, y)
+    comparisons = model_training.compare_to_baselines(pipeline.predict(X), features)
+
+    exported = model_training.export_linear_model(
+        pipeline,
+        modeling.FEATURE_COLUMNS,
+        {"holdout_comparisons": comparisons, "bootstrap": dict(model_training.BOOTSTRAP_SETTINGS)},
+    )
+    round_tripped = json.loads(json.dumps(exported))
+
+    assert set(round_tripped["holdout_comparisons"]) == {"baseline_roll5", "baseline_roll10"}
+    for comparison in round_tripped["holdout_comparisons"].values():
+        assert set(comparison) == {"mae_improvement", "ci_low", "ci_high"}
+    assert round_tripped["bootstrap"] == {"n_boot": 2000, "unit": "player", "seed": 42, "level": 0.95}
+
+
+def test_shipped_model_json_matches_ui_contract():
+    model = modeling.load_linear_model()
+
+    assert model["feature_columns"] == modeling.FEATURE_COLUMNS
+    assert len(model["coefficients"]) == len(modeling.FEATURE_COLUMNS)
+    assert set(model["holdout_comparisons"]) == {"baseline_roll5", "baseline_roll10"}
+    for comparison in model["holdout_comparisons"].values():
+        assert set(comparison) == {"mae_improvement", "ci_low", "ci_high"}
+        assert comparison["ci_low"] <= comparison["mae_improvement"] <= comparison["ci_high"]
+    assert model["bootstrap"] == model_training.BOOTSTRAP_SETTINGS
+    assert set(model["holdout_metrics"]) == set(model_training.MODEL_NAMES)

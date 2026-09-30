@@ -34,15 +34,7 @@ def _cached_forecast_summary(game_log_df: pd.DataFrame, stat_col: str) -> dict:
     return forecast.summarize_forecast(game_log_df, stat_col)
 
 
-@st.cache_data
-def _cached_points_model() -> dict | None:
-    try:
-        return modeling.load_linear_model()
-    except FileNotFoundError:
-        return None
-
-
-def _sidebar_player_select(label: str, options: list[str], key: str, default: str) -> str:
+def _sidebar_select(label: str, options: list[str], key: str, default: str) -> str:
     # Default via session_state, not `index=`: Streamlit warns when a widget has a
     # non-default index *and* a callback (the sample-data button) writes its key.
     if key not in st.session_state:
@@ -75,10 +67,14 @@ def _stop_with_fetch_error(exc: Exception, season_key: str, player_keys: list[st
 
 
 def _show_sample_banner(*used_sample_flags: bool) -> None:
+    # Worded to stay true when only a league-wide table fell back for a player whose own
+    # game log loaded live -- the snapshot's league tables cover every player.
     if any(used_sample_flags):
+        players = " and ".join(sample_data_loader.SAMPLE_PLAYERS.values())
         st.warning(
-            f"Showing cached sample data ({SAMPLE_LABEL}) -- the live NBA stats API is "
-            "unreachable from this host right now. Other selections show an error "
+            f"Some of this page comes from a cached {sample_data_loader.SAMPLE_SEASON} snapshot of "
+            "real data -- the live NBA stats API is unreachable from this host right now. The "
+            f"snapshot covers {players} plus league-wide tables; any other player shows an error "
             "rather than made-up data."
         )
 
@@ -91,6 +87,8 @@ except data.PlayerStatsFetchError as exc:
 
 player_index = metrics.build_player_index(all_players)
 player_names = metrics.get_player_names(all_players)
+seasons = metrics.get_recent_seasons()
+default_season = metrics.get_default_season()
 
 if page == "Home":
     st.subheader("Welcome")
@@ -142,11 +140,10 @@ if page == "Home":
 elif page == "Compare Players":
     st.subheader("Compare Two Players")
 
-    seasons = metrics.get_recent_seasons()
-    season = st.sidebar.selectbox("Season", seasons, index=0, key="compare_season")
+    season = _sidebar_select("Season", seasons, "compare_season", default_season)
 
-    player1_name = _sidebar_player_select("Player 1", player_names, "compare_player1", "LeBron James")
-    player2_name = _sidebar_player_select("Player 2", player_names, "compare_player2", "Kevin Durant")
+    player1_name = _sidebar_select("Player 1", player_names, "compare_player1", "LeBron James")
+    player2_name = _sidebar_select("Player 2", player_names, "compare_player2", "Kevin Durant")
 
     player1_id = metrics.get_player_id(player_index, player1_name)
     player2_id = metrics.get_player_id(player_index, player2_name)
@@ -215,9 +212,8 @@ elif page == "Insights":
         "about what the data can and can't show, not a prediction."
     )
 
-    seasons = metrics.get_recent_seasons()
-    season = st.sidebar.selectbox("Season", seasons, index=0, key="insights_season")
-    player_name = _sidebar_player_select("Player", player_names, "insights_player", "LeBron James")
+    season = _sidebar_select("Season", seasons, "insights_season", default_season)
+    player_name = _sidebar_select("Player", player_names, "insights_player", "LeBron James")
     player_id = metrics.get_player_id(player_index, player_name)
 
     try:
@@ -408,9 +404,8 @@ elif page == "Predictions":
         "hadn't seen yet, next to the simple averages it has to beat."
     )
 
-    seasons = metrics.get_recent_seasons()
-    season = st.sidebar.selectbox("Season", seasons, index=0, key="predictions_season")
-    player_name = _sidebar_player_select("Player", player_names, "predictions_player", "LeBron James")
+    season = _sidebar_select("Season", seasons, "predictions_season", default_season)
+    player_name = _sidebar_select("Player", player_names, "predictions_player", "LeBron James")
     player_id = metrics.get_player_id(player_index, player_name)
 
     try:
@@ -427,7 +422,10 @@ elif page == "Predictions":
     tab_model, tab_forecast = st.tabs(["Next-Game Points Model", "Season Forecast"])
 
     with tab_model:
-        model = _cached_points_model()
+        try:
+            model = modeling.load_linear_model()  # a ~2 KB JSON; not worth caching
+        except FileNotFoundError:
+            model = None
         if model is None:
             st.info(
                 "No trained model found. Run `python -m scripts.train_model` to create "
@@ -450,11 +448,14 @@ elif page == "Predictions":
             baselines = [(col2, "10-game average", roll10_mae), (col3, "5-game average", roll5_mae)]
             for col, label, mae in baselines:
                 col.metric(label, f"{mae:.2f} pts", f"{mae - ridge_mae:+.2f} vs. model", delta_color="off")
+            comparisons = model["holdout_comparisons"]
             st.caption(
-                f"Typical miss = mean absolute error over {model['n_holdout_rows']:,} unseen player-games. "
-                "The model clearly beats a 5-game average but only barely beats a plain 10-game one: "
-                "single-game scoring is mostly noise around a player's level, so extra features "
-                "can't get much closer."
+                f"Typical miss = mean absolute error over {model['n_holdout_rows']:,} unseen "
+                "player-games. Versus a 5-game average, the model "
+                f"{modeling.describe_comparison(comparisons['baseline_roll5'])}; versus a plain "
+                f"10-game average, it {modeling.describe_comparison(comparisons['baseline_roll10'])}. "
+                "Intervals come from resampling whole players. Single-game scoring is mostly noise "
+                "around a player's level, so box-score features can't get much closer."
             )
 
             if len(game_log_df) < MIN_PREDICTION_GAMES:
@@ -514,6 +515,11 @@ elif page == "Predictions":
                     st.caption(
                         f"In-sample: the model was trained on {season}, so these per-game misses look "
                         "slightly better than they would on new data."
+                    )
+                elif season < model["training_season"]:
+                    st.caption(
+                        f"Not a true forecast: the model was trained on {model['training_season']}, a "
+                        f"later season, so it learned from data that didn't exist yet in {season}."
                     )
                 st.caption(
                     "Knows only this player's recent box scores, rest, and home/away -- not injuries, "

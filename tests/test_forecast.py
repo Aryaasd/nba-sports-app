@@ -175,6 +175,13 @@ def test_compare_to_season_mean_follows_the_actual_result():
     assert "tie" in forecast.compare_to_season_mean(_maes(4.75, 4.72))  # <2% apart is not a claim
 
 
+def test_constant_stat_line_summarizes_without_dividing_by_zero():
+    # Regression: a player with 0 points in every game (real case: 2023-24 Ryan Arcidiacono).
+    result = forecast.summarize_forecast(_game_log([0] * 25), "PTS")
+    assert result["metrics"]["season_mean"]["mae"] == 0
+    assert "tie" in forecast.compare_to_season_mean(result["metrics"])
+
+
 def test_describe_alpha_bands():
     low = forecast.describe_alpha(0.05)
     assert "season-long average" in low and "barely move" in low

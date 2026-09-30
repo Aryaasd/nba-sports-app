@@ -99,8 +99,10 @@ def _with_sample_fallback(live_fn, sample_fn, *args):
     """(result, used_sample_data). Live data first; on failure, the bundled
     snapshot if this exact selection is in it, otherwise re-raise.
 
-    The flag is part of the return value (not a side effect) because
-    @st.cache_data replays return values on a cache hit, never side effects.
+    Deliberately runs outside the cache: only successful live fetches are cached
+    (via _live_cached), so the app returns to live data as soon as the API does.
+    While it's down, the open circuit makes each retry instant and the snapshot is
+    a few-millisecond Parquet read.
     """
     try:
         return live_fn(*args), False
@@ -109,6 +111,9 @@ def _with_sample_fallback(live_fn, sample_fn, *args):
         if sample is None:
             raise
         return sample, True
+
+
+_live_cached = st.cache_data(ttl=CACHE_TTL_SECONDS)
 
 
 def _get_all_players_uncached() -> list[dict]:
@@ -138,12 +143,12 @@ def _fetch_player_game_log_uncached(player_id: int, season: str):
     return metrics.parse_and_sort_game_log(df)
 
 
-@st.cache_data(ttl=CACHE_TTL_SECONDS)
+_cached_player_game_log = _live_cached(_fetch_player_game_log_uncached)
+
+
 def fetch_player_game_log(player_id: int, season: str):
     """(game log, used_sample_data)."""
-    return _with_sample_fallback(
-        _fetch_player_game_log_uncached, sample_data_loader.load_game_log, player_id, season
-    )
+    return _with_sample_fallback(_cached_player_game_log, sample_data_loader.load_game_log, player_id, season)
 
 
 def _fetch_advanced_stats_uncached(season: str):
@@ -161,12 +166,12 @@ def _fetch_advanced_stats_uncached(season: str):
         ) from exc
 
 
-@st.cache_data(ttl=CACHE_TTL_SECONDS)
+_cached_advanced_stats = _live_cached(_fetch_advanced_stats_uncached)
+
+
 def fetch_advanced_stats(season: str):
     """(whole-league advanced stats, used_sample_data) -- fetched once per season, shared across players."""
-    return _with_sample_fallback(
-        _fetch_advanced_stats_uncached, sample_data_loader.load_advanced_stats, season
-    )
+    return _with_sample_fallback(_cached_advanced_stats, sample_data_loader.load_advanced_stats, season)
 
 
 def _get_all_teams_uncached() -> list[dict]:
@@ -196,11 +201,13 @@ def _fetch_team_game_dates_uncached(team_id: int, season: str) -> list:
     return sorted(dates.tolist())
 
 
-@st.cache_data(ttl=CACHE_TTL_SECONDS)
+_cached_team_game_dates = _live_cached(_fetch_team_game_dates_uncached)
+
+
 def fetch_team_game_dates(team_id: int, season: str):
     """(every date the team played in `season`, used_sample_data) -- Insights: Absence & Rest Impact."""
     return _with_sample_fallback(
-        _fetch_team_game_dates_uncached, sample_data_loader.load_team_game_dates, team_id, season
+        _cached_team_game_dates, sample_data_loader.load_team_game_dates, team_id, season
     )
 
 
@@ -219,11 +226,13 @@ def _fetch_team_advanced_stats_uncached(season: str):
         ) from exc
 
 
-@st.cache_data(ttl=CACHE_TTL_SECONDS)
+_cached_team_advanced_stats = _live_cached(_fetch_team_advanced_stats_uncached)
+
+
 def fetch_team_advanced_stats(season: str):
     """(whole-league team DEF_RATING, used_sample_data) -- Insights: Performance vs. Defensive Quality."""
     return _with_sample_fallback(
-        _fetch_team_advanced_stats_uncached, sample_data_loader.load_team_advanced_stats, season
+        _cached_team_advanced_stats, sample_data_loader.load_team_advanced_stats, season
     )
 
 
@@ -245,12 +254,12 @@ def _fetch_shot_chart_uncached(player_id: int, season: str):
     return df[[c for c in SHOT_CHART_COLUMNS if c in df.columns]]
 
 
-@st.cache_data(ttl=CACHE_TTL_SECONDS)
+_cached_shot_chart = _live_cached(_fetch_shot_chart_uncached)
+
+
 def fetch_shot_chart(player_id: int, season: str):
     """(every shot attempt for a player-season, used_sample_data) -- Insights: Hot Hand + Shot Chart."""
-    return _with_sample_fallback(
-        _fetch_shot_chart_uncached, sample_data_loader.load_shot_chart, player_id, season
-    )
+    return _with_sample_fallback(_cached_shot_chart, sample_data_loader.load_shot_chart, player_id, season)
 
 
 LEAGUE_GAME_LOG_COLUMNS = [

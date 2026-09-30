@@ -26,7 +26,7 @@ An interactive Streamlit app for comparing NBA players, testing hypotheses about
   * **Hot Hand Fallacy** — a permutation test of whether makes and misses are streakier than chance, in the spirit of Gilovich, Vallone & Tversky (1985) and the Miller & Sanjurjo (2015) bias correction.
   * **Shot Chart** — a field-goal-percentage heatmap on a hand-drawn court, with low-attempt bins muted so small samples don't look like signal.
 * **Predictions:** two forecasting techniques, each scored only on games it hadn't seen:
-  * **Next-Game Points Model** — a Ridge regression trained on 20,932 player-games. It shows a per-player backtest chart and a next-game projection.
+  * **Next-Game Points Model** — a Ridge regression trained on 20,932 player-games, evaluated on a full unseen season with bootstrap confidence intervals. It shows a per-player backtest chart and a next-game projection.
   * **Season Forecast** — simple exponential smoothing on one player's own season, validated walk-forward. The fitted smoothing weight is itself a finding (see below).
 * **Resilient demo:** a circuit breaker and a labeled sample-data fallback, so the hosted app never dead-ends on a blocked API.
 
@@ -50,10 +50,17 @@ The goal was to find out honestly how well next-game stats *can* be predicted, n
 | **Ridge regression** | **4.759** | **4.708** | **6.115** |
 | Random forest (comparison only) | 4.779 | 4.723 | 6.132 |
 
+To test whether those gaps are real rather than noise, the holdout improvements have 95% confidence intervals from a **cluster bootstrap that resamples whole players**, since one player's games aren't independent of each other:
+
+| Ridge vs. | MAE improvement | 95% CI | Verdict |
+|---|---:|---|---|
+| 5-game average | +0.159 pts | [+0.135, +0.183] | Ridge is better |
+| 10-game average | +0.008 pts | [−0.006, +0.021] | Statistically tied |
+
 **What this shows**
-- The model beats a 5-game average by 3.3%, but a plain 10-game average by only **0.2%**. A longer averaging window captures about 95% of the gain; the other features add little.
+- The model genuinely beats a 5-game average, but it **ties a plain 10-game average**. The features add nothing measurable beyond a longer averaging window, and the app says so rather than claiming a 0.2% "win".
 - Single-game scoring is mostly noise around a player's level. With a typical miss near 4.7 points, the floor is close to what any box-score model can reach.
-- A nonlinear random forest didn't beat Ridge, so the simpler, interpretable model ships.
+- A nonlinear random forest didn't beat Ridge either, so the simpler, interpretable model ships.
 
 ### Season forecast: exponential smoothing
 
@@ -83,7 +90,7 @@ Reproduce the numbers with `python -m scripts.train_model` (about 10s) and `pyth
 
 * **Core:** Python, Streamlit
 * **Data:** Pandas, NumPy, `nba_api`, Parquet (bundled snapshot)
-* **Modeling:** scikit-learn (Ridge, random forest, `TimeSeriesSplit`; training only), statsmodels (exponential smoothing)
+* **Modeling:** scikit-learn (Ridge, random forest, `TimeSeriesSplit`; training only), statsmodels (exponential smoothing), cluster bootstrap for confidence intervals
 * **Visualization:** Altair
 * **Testing/CI:** pytest, ruff, GitHub Actions
 
@@ -137,7 +144,7 @@ The app is split into small, single-purpose modules:
 * **`modeling.py`** — next-game feature engineering and inference, shared by training and the live app so the two can't drift apart.
   * Each feature is built from the player's own earlier games only: shifted one game, computed per player, and requiring a full window.
   * The model ships as plain JSON coefficients (`model/next_game_points.json`), so the deployed app doesn't need scikit-learn.
-* **`model_training.py`** — date-block time-series CV, model fitting, and coefficient export (scikit-learn).
+* **`model_training.py`** — date-block time-series CV, model fitting, player-clustered bootstrap CIs, and coefficient export (scikit-learn).
 * **`insights/`** — one module per analysis (`absence.py`, `defense_tiers.py`, `hot_hand.py`, `shot_chart.py`, `forecast.py`). Each is honest about a real data limitation:
   * No free injury-designation feed exists, so **Absence & Rest Impact** measures games missed, never *why* they were missed.
   * Defensive-scheme data is proprietary, so **Performance vs. Defense** buckets opponents by measured `DEF_RATING` instead.

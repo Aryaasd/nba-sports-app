@@ -21,6 +21,21 @@ def test_get_current_season(today, expected):
     assert metrics.get_current_season(today) == expected
 
 
+@pytest.mark.parametrize(
+    "today, expected",
+    [
+        (dt.date(2026, 9, 30), "2025-26"),
+        (dt.date(2026, 10, 1), "2025-26"),  # new season listed, but no games yet
+        (dt.date(2026, 10, 31), "2025-26"),
+        (dt.date(2026, 11, 1), "2026-27"),
+        (dt.date(2027, 3, 15), "2026-27"),
+    ],
+)
+def test_get_default_season_skips_empty_october(today, expected):
+    assert metrics.get_default_season(today) == expected
+    assert expected in metrics.get_recent_seasons(today=today)
+
+
 def test_get_recent_seasons_ordering():
     seasons = metrics.get_recent_seasons(n=5, today=dt.date(2026, 8, 5))
     assert seasons == ["2025-26", "2024-25", "2023-24", "2022-23", "2021-22"]

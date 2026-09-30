@@ -173,7 +173,8 @@ def compare_to_season_mean(metrics: dict, tolerance: float = 0.02) -> str:
     is not a difference worth claiming.
     """
     ses_mae, mean_mae = metrics["ses"]["mae"], metrics["season_mean"]["mae"]
-    edge = (mean_mae - ses_mae) / mean_mae
+    # A stat that never varies (e.g. 0 points every game) is forecast perfectly by both.
+    edge = (mean_mae - ses_mae) / mean_mae if mean_mae else 0.0
     if edge > tolerance:
         return f"Smoothing beat the season average by {edge:.0%}: recent form carried real signal here."
     if edge < -tolerance:
