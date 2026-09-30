@@ -70,6 +70,28 @@ def test_build_delta_bar_chart_encodes_stat_and_delta():
     assert "encoding" in chart.to_dict()
 
 
+def test_build_backtest_chart_layers_and_series_colors():
+    dates = pd.to_datetime(["2025-11-01", "2025-11-03", "2025-11-05"])
+    long_df = pd.concat(
+        [
+            pd.DataFrame({"GAME_DATE": dates, "Series": label, "Value": values})
+            for label, values in [
+                ("Actual", [20, 31, 18]),
+                ("Model", [22.0, 22.5, 24.1]),
+                ("Baseline (10-game avg)", [21.0, 21.4, 22.9]),
+            ]
+        ]
+    )
+    order = ["Actual", "Model", "Baseline (10-game avg)"]
+    chart = charts.build_backtest_chart(long_df, order, y_title="PTS")
+    assert isinstance(chart, alt.LayerChart)
+    assert len(chart.layer) == 3  # actual dots, prediction lines, hover crosshair
+    spec = chart.to_dict()
+    color_scale = spec["layer"][0]["encoding"]["color"]["scale"]
+    assert color_scale["domain"] == order
+    assert color_scale["range"] == [charts.SERIES_NEUTRAL, charts.SERIES_BLUE, charts.SERIES_ORANGE]
+
+
 def test_build_defense_tier_chart_encodes_tier_and_value():
     tier_result = pd.DataFrame(
         {"PTS": [19.3, 22.1], "REB": [6.0, 6.1], "AST": [6.3, 7.8], "Games": [25, 35]},

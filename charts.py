@@ -24,6 +24,9 @@ DIVERGING_NEGATIVE = "#3987e5"  # below baseline
 DIVERGING_POSITIVE = "#e66767"  # above baseline
 DIVERGING_NEUTRAL = "#383835"
 
+# Muted ink (dark mode) -- raw observations that should recede behind the predictions.
+SERIES_NEUTRAL = "#898781"
+
 _DARK_SURFACE = "#1a1a19"
 _DARK_TEXT_PRIMARY = "#ffffff"
 _DARK_TEXT_SECONDARY = "#c3c2b7"
@@ -129,6 +132,55 @@ def build_delta_bar_chart(stats: dict[str, dict[str, float]]) -> alt.Chart:
         )
         .properties(height=200)
     )
+
+
+def build_backtest_chart(long_df: pd.DataFrame, series_order: list[str], y_title: str) -> alt.LayerChart:
+    """Actual per-game values vs. one-step-ahead predictions, from long (GAME_DATE, Series, Value) data.
+
+    `series_order` is [actual, model, baseline]. Actuals are muted dots -- single games are
+    noisy, and a zig-zag line would drown the two prediction lines the chart is about. The
+    model is a solid line; the baseline is dashed, since it's a reference, not a result.
+    """
+    actual, model, baseline = series_order
+    color = alt.Color(
+        "Series:N",
+        scale=alt.Scale(domain=series_order, range=[SERIES_NEUTRAL, SERIES_BLUE, SERIES_ORANGE]),
+        legend=alt.Legend(title=None, orient="top"),
+    )
+    x = alt.X("GAME_DATE:T", title=None)
+    base = alt.Chart(long_df).encode(x=x, y=alt.Y("Value:Q", title=y_title))
+
+    dots = (
+        base.transform_filter(alt.datum.Series == actual)
+        .mark_circle(size=50, opacity=0.75)
+        .encode(color=color)
+    )
+    lines = (
+        base.transform_filter(alt.datum.Series != actual)
+        .mark_line(strokeWidth=2)
+        .encode(
+            color=color,
+            strokeDash=alt.StrokeDash(
+                "Series:N", scale=alt.Scale(domain=[model, baseline], range=[[1, 0], [6, 4]]), legend=None
+            ),
+        )
+    )
+
+    # Full-height hover rule with every series' value for that game (Altair's multi-line tooltip pattern).
+    hover = alt.selection_point(nearest=True, on="pointerover", fields=["GAME_DATE"], empty=False)
+    crosshair = (
+        alt.Chart(long_df)
+        .transform_pivot("Series", value="Value", groupby=["GAME_DATE"])
+        .mark_rule(color=_DARK_TEXT_SECONDARY, strokeWidth=1)
+        .encode(
+            x=x,
+            opacity=alt.condition(hover, alt.value(0.6), alt.value(0)),
+            tooltip=[alt.Tooltip("GAME_DATE:T", title="Game")]
+            + [alt.Tooltip(f"{name}:Q", format=".1f") for name in series_order],
+        )
+        .add_params(hover)
+    )
+    return (dots + lines + crosshair).properties(height=340)
 
 
 def build_defense_tier_chart(tier_result: pd.DataFrame) -> alt.Chart:

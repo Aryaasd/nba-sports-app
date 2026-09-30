@@ -165,6 +165,16 @@ def test_metrics_finite_for_all_methods():
     assert 0.0 <= result["alpha"] <= 1.0
 
 
+def _maes(ses, season_mean):
+    return {"ses": {"mae": ses}, "season_mean": {"mae": season_mean}, "naive": {"mae": 9.0}}
+
+
+def test_compare_to_season_mean_follows_the_actual_result():
+    assert forecast.compare_to_season_mean(_maes(4.0, 5.0)).startswith("Smoothing beat")
+    assert forecast.compare_to_season_mean(_maes(4.86, 4.72)).startswith("Smoothing did 3% worse")
+    assert "tie" in forecast.compare_to_season_mean(_maes(4.75, 4.72))  # <2% apart is not a claim
+
+
 def test_describe_alpha_bands():
     low = forecast.describe_alpha(0.05)
     assert "season-long average" in low and "barely move" in low

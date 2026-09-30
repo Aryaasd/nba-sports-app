@@ -4,18 +4,21 @@ import streamlit as st
 import charts
 import data
 import metrics
+import modeling
 import sample_data_loader
-from insights import absence, defense_tiers, hot_hand, shot_chart
+from insights import absence, defense_tiers, forecast, hot_hand, shot_chart
 
 st.set_page_config(page_title="NBA Sports App", layout="wide")
 
 st.title("NBA Sports App")
 
-page = st.sidebar.radio("Navigate", ["Home", "Compare Players", "Insights"])
+page = st.sidebar.radio("Navigate", ["Home", "Compare Players", "Insights", "Predictions"])
 
 SAMPLE_LABEL = (
     f"{' / '.join(sample_data_loader.SAMPLE_PLAYERS.values())}, {sample_data_loader.SAMPLE_SEASON}"
 )
+# 10 games of history before the first prediction, plus enough predictions to judge.
+MIN_PREDICTION_GAMES = 15
 
 
 @st.cache_data(ttl=data.CACHE_TTL_SECONDS)
@@ -24,6 +27,19 @@ def _cached_hot_hand_summary(shot_df: pd.DataFrame, n_permutations: int = 2000, 
     # ~1s for 2000 shuffles it's worth caching same as a network fetch -- Streamlit
     # reruns this whole script on every widget interaction on the Insights page.
     return hot_hand.summarize_hot_hand(shot_df, n_permutations=n_permutations, seed=seed)
+
+
+@st.cache_data(ttl=data.CACHE_TTL_SECONDS)
+def _cached_forecast_summary(game_log_df: pd.DataFrame, stat_col: str) -> dict:
+    return forecast.summarize_forecast(game_log_df, stat_col)
+
+
+@st.cache_data
+def _cached_points_model() -> dict | None:
+    try:
+        return modeling.load_linear_model()
+    except FileNotFoundError:
+        return None
 
 
 def _sidebar_player_select(label: str, options: list[str], key: str, default: str) -> str:
@@ -84,7 +100,7 @@ if page == "Home":
         "the sidebar to get started."
     )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
         st.markdown("**Compare Players**")
         st.write(
@@ -107,12 +123,20 @@ if page == "Home":
             "permutation test for the hot-hand fallacy, and a shot-chart "
             "efficiency heatmap."
         )
+    with col4:
+        st.markdown("**Predictions**")
+        st.write(
+            "A next-game points model trained on 20,000+ player-games, and a "
+            "season forecast using exponential smoothing. Both are scored only on "
+            "games they hadn't seen, against simple averages."
+        )
 
     st.divider()
     st.caption(
-        "Every Insights analysis states what it can't show rather than "
-        "overclaiming: no free live injury feed exists, true defensive-scheme "
-        "data is proprietary, and small samples are flagged instead of guessed at."
+        "Every analysis states what it can't show rather than overclaiming: no free "
+        "live injury feed exists, true defensive-scheme data is proprietary, small "
+        "samples are flagged instead of guessed at, and each model is reported next "
+        "to the simple baseline it has to beat."
     )
 
 elif page == "Compare Players":
@@ -376,3 +400,170 @@ elif page == "Insights":
                         "official zone geometry -- a supplementary summary, not a "
                         "second source of truth."
                     )
+
+elif page == "Predictions":
+    st.subheader("Predictions")
+    st.caption(
+        "Two forecasting techniques for one player-season. Each is scored only on games it "
+        "hadn't seen yet, next to the simple averages it has to beat."
+    )
+
+    seasons = metrics.get_recent_seasons()
+    season = st.sidebar.selectbox("Season", seasons, index=0, key="predictions_season")
+    player_name = _sidebar_player_select("Player", player_names, "predictions_player", "LeBron James")
+    player_id = metrics.get_player_id(player_index, player_name)
+
+    try:
+        game_log_df, sample_log = data.fetch_player_game_log(player_id, season)
+    except data.PlayerStatsFetchError as exc:
+        _stop_with_fetch_error(exc, "predictions_season", ["predictions_player"])
+
+    _show_sample_banner(sample_log)
+
+    if game_log_df.empty:
+        st.error(f"No {season} game data for {player_name}.")
+        st.stop()
+
+    tab_model, tab_forecast = st.tabs(["Next-Game Points Model", "Season Forecast"])
+
+    with tab_model:
+        model = _cached_points_model()
+        if model is None:
+            st.info(
+                "No trained model found. Run `python -m scripts.train_model` to create "
+                "`model/next_game_points.json`."
+            )
+        else:
+            holdout = model["holdout_metrics"]
+            ridge_mae = holdout["ridge"]["mae"]
+            roll5_mae = holdout["baseline_roll5"]["mae"]
+            roll10_mae = holdout["baseline_roll10"]["mae"]
+            st.write(
+                f"A Ridge regression trained on every player's {model['training_season']} regular "
+                f"season ({model['n_train_rows']:,} player-games) predicts next-game points from "
+                "trailing 5- and 10-game averages of points, rebounds, assists and minutes, plus "
+                f"rest days and home/away. Scored on the entire {model['holdout_season']} season, "
+                "which it never saw:"
+            )
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Model: typical miss", f"{ridge_mae:.2f} pts")
+            baselines = [(col2, "10-game average", roll10_mae), (col3, "5-game average", roll5_mae)]
+            for col, label, mae in baselines:
+                col.metric(label, f"{mae:.2f} pts", f"{mae - ridge_mae:+.2f} vs. model", delta_color="off")
+            st.caption(
+                f"Typical miss = mean absolute error over {model['n_holdout_rows']:,} unseen player-games. "
+                "The model clearly beats a 5-game average but only barely beats a plain 10-game one: "
+                "single-game scoring is mostly noise around a player's level, so extra features "
+                "can't get much closer."
+            )
+
+            if len(game_log_df) < MIN_PREDICTION_GAMES:
+                st.info(
+                    f"{player_name} played {len(game_log_df)} games in {season}. The model needs 10 "
+                    "earlier games before its first prediction, so there aren't enough predictions "
+                    f"here to judge it (need at least {MIN_PREDICTION_GAMES} games)."
+                )
+            else:
+                backtest = modeling.player_backtest(game_log_df.assign(PLAYER_ID=player_id), model)
+                series = ["Actual", "Model", "Baseline (10-game avg)"]
+                chart_col, side_col = st.columns([3, 2])
+                with chart_col:
+                    st.markdown(f"**{player_name}, {season}: each prediction, made before the game**")
+                    long_df = backtest.melt(
+                        id_vars="GAME_DATE", value_vars=series, var_name="Series", value_name="Value"
+                    )
+                    st.altair_chart(
+                        charts.build_backtest_chart(long_df, series, y_title="Points"),
+                        use_container_width=True,
+                        theme=None,
+                    )
+                with side_col:
+                    st.markdown(f"**{player_name}'s typical miss this season**")
+                    player_errors = pd.DataFrame(
+                        {
+                            "Method": ["Model", "10-game average", "5-game average"],
+                            "Typical miss (pts)": [
+                                (backtest[col] - backtest["Actual"]).abs().mean()
+                                for col in ["Model", "Baseline (10-game avg)", "Baseline (5-game avg)"]
+                            ],
+                        }
+                    )
+                    st.dataframe(
+                        player_errors.style.format({"Typical miss (pts)": "{:.2f}"}),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+                    last_game = game_log_df["GAME_DATE"].max()
+                    st.markdown(f"**Next game after {last_game:%b %d, %Y}**")
+                    rest_col, home_col = st.columns(2)
+                    days_rest = rest_col.number_input(
+                        "Days of rest", 0, modeling.MAX_DAYS_REST, 1, key="predictions_rest"
+                    )
+                    location = home_col.radio(
+                        "Location", ["Home", "Away"], horizontal=True, key="predictions_home"
+                    )
+                    next_row = modeling.build_next_game_row(game_log_df, days_rest, location == "Home")
+                    st.metric("Projected points", f"{modeling.predict_linear(model, next_row)[0]:.1f}")
+                    st.caption(
+                        f"Typical miss on unseen games is about {ridge_mae:.1f} pts. Rest and location "
+                        "are your assumptions -- the app has no schedule feed."
+                    )
+
+                if season == model["training_season"]:
+                    st.caption(
+                        f"In-sample: the model was trained on {season}, so these per-game misses look "
+                        "slightly better than they would on new data."
+                    )
+                st.caption(
+                    "Knows only this player's recent box scores, rest, and home/away -- not injuries, "
+                    "minutes restrictions, the opponent, or trades."
+                )
+
+    with tab_forecast:
+        st.write(
+            "A different technique: forecast each game from this player's own season so far, "
+            "with no features and no other players. **Simple exponential smoothing** "
+            "(statsmodels) weights recent games more heavily and learns *how much* from the "
+            "data. Evaluated walk-forward: every forecast uses only the games before it."
+        )
+        stat_col = st.radio("Stat", ["PTS", "REB", "AST"], horizontal=True, key="forecast_stat")
+        result = _cached_forecast_summary(game_log_df, stat_col)
+
+        if result["insufficient_data"]:
+            st.info(
+                f"{player_name} played {result['n_games']} games in {season} -- need at least "
+                f"{forecast.MIN_TOTAL_GAMES} to evaluate a forecast."
+            )
+        else:
+            walk_forward = result["metrics"]
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Smoothing: typical miss", f"{walk_forward['ses']['mae']:.2f} {stat_col}")
+            col2.metric("Season-to-date average", f"{walk_forward['season_mean']['mae']:.2f} {stat_col}")
+            col3.metric("Last game carried forward", f"{walk_forward['naive']['mae']:.2f} {stat_col}")
+
+            chart_col, note_col = st.columns([3, 2])
+            with chart_col:
+                series = ["Actual", forecast.CHART_LABELS["ses"], forecast.CHART_LABELS["season_mean"]]
+                st.altair_chart(
+                    charts.build_backtest_chart(result["chart_df"], series, y_title=stat_col),
+                    use_container_width=True,
+                    theme=None,
+                )
+            with note_col:
+                st.markdown("**What the fitted weight says**")
+                st.write(
+                    f"Smoothing weight **α = {result['alpha']:.2f}**. "
+                    f"{forecast.describe_alpha(result['alpha'])}"
+                )
+                st.write(f"**{forecast.compare_to_season_mean(walk_forward)}**")
+                st.caption(
+                    "At α = 0 smoothing *is* the season average; at α = 1 it's last game carried "
+                    "forward. Whether a fitted α earns its keep is the Hot Hand question, asked per "
+                    "game instead of per shot."
+                )
+                st.metric(f"Next-game {stat_col} forecast", f"{result['next_forecast']:.1f}")
+                st.caption(
+                    f"Scored on {result['n_games'] - forecast.MIN_TRAIN_SIZE} walk-forward forecasts; "
+                    f"the first {forecast.MIN_TRAIN_SIZE} games are training-only."
+                )

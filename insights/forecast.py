@@ -166,6 +166,27 @@ def summarize_forecast(game_log_df: pd.DataFrame, stat_col: str = "PTS") -> dict
     }
 
 
+def compare_to_season_mean(metrics: dict, tolerance: float = 0.02) -> str:
+    """Plain-language verdict: did smoothing beat the season-to-date average (by MAE)?
+
+    Within `tolerance` (relative) counts as a tie -- a 1% gap over a few dozen forecasts
+    is not a difference worth claiming.
+    """
+    ses_mae, mean_mae = metrics["ses"]["mae"], metrics["season_mean"]["mae"]
+    edge = (mean_mae - ses_mae) / mean_mae
+    if edge > tolerance:
+        return f"Smoothing beat the season average by {edge:.0%}: recent form carried real signal here."
+    if edge < -tolerance:
+        return (
+            f"Smoothing did {-edge:.0%} worse than the plain season average: the recent swings "
+            "it reacted to were mostly noise."
+        )
+    return (
+        "Smoothing and the season average finished in a tie: recent form added little beyond "
+        "the season level."
+    )
+
+
 def describe_alpha(alpha: float) -> str:
     """Plain-language reading of a fitted SES alpha (bands: ALPHA_LOW, ALPHA_HIGH)."""
     share = "under 1%" if alpha < 0.005 else f"about {alpha:.0%}"
