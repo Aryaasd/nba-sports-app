@@ -21,7 +21,7 @@ SAMPLE_LABEL = (
 MIN_PREDICTION_GAMES = 15
 
 
-@st.cache_data(ttl=data.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=data.CACHE_TTL_SECONDS, show_spinner="Running the permutation test...")
 def _cached_hot_hand_summary(shot_df: pd.DataFrame, n_permutations: int = 2000, seed: int = 42) -> dict:
     # The permutation test itself is pure computation (no nba_api call), but at
     # ~1s for 2000 shuffles it's worth caching same as a network fetch -- Streamlit
@@ -29,7 +29,7 @@ def _cached_hot_hand_summary(shot_df: pd.DataFrame, n_permutations: int = 2000, 
     return hot_hand.summarize_hot_hand(shot_df, n_permutations=n_permutations, seed=seed)
 
 
-@st.cache_data(ttl=data.CACHE_TTL_SECONDS)
+@st.cache_data(ttl=data.CACHE_TTL_SECONDS, show_spinner="Fitting the forecast...")
 def _cached_forecast_summary(game_log_df: pd.DataFrame, stat_col: str) -> dict:
     return forecast.summarize_forecast(game_log_df, stat_col)
 
@@ -52,8 +52,9 @@ def _select_sample_data(season_key: str, player_keys: list[str]) -> None:
 
 def _stop_with_fetch_error(exc: Exception, season_key: str, player_keys: list[str]) -> None:
     st.error(
-        "Couldn't load live NBA data for this selection -- the NBA stats API didn't "
-        "respond. It blocks many cloud servers, including the one this demo is hosted on."
+        "Couldn't load live NBA data for this selection -- the NBA stats API didn't respond. "
+        "It blocks many cloud servers (including the one this demo is hosted on) and briefly "
+        "throttles bursts of requests, so a local run may just need a few minutes."
     )
     st.button(
         f"Explore with cached sample data ({SAMPLE_LABEL})",
@@ -64,6 +65,15 @@ def _stop_with_fetch_error(exc: Exception, season_key: str, player_keys: list[st
     with st.expander("Error details"):
         st.code(str(exc), language=None)
     st.stop()
+
+
+def _stop_if_no_games(game_logs: dict[str, pd.DataFrame], season: str) -> None:
+    # Not an error: the fetch worked, there are just no games -- e.g. a newly listed
+    # season that hasn't tipped off, or a player who didn't play that year.
+    missing = [name for name, log in game_logs.items() if log.empty]
+    if missing:
+        st.info(f"No {season} games logged for {' or '.join(missing)} yet. Pick another season or player.")
+        st.stop()
 
 
 def _show_sample_banner(*used_sample_flags: bool) -> None:
@@ -157,53 +167,52 @@ elif page == "Compare Players":
 
     _show_sample_banner(sample1, sample2, sample_advanced)
 
-    if df1.empty or df2.empty:
-        st.error("Could not fetch stats for one or both players this season.")
+    _stop_if_no_games({player1_name: df1, player2_name: df2}, season)
+
+    view = st.radio("Chart View", ["Side by Side", "Overlay"], horizontal=True)
+
+    if view == "Side by Side":
+        col1, col2 = st.columns(2)
+        with col1:
+            st.line_chart(charts.prepare_line_chart_data(df1))
+            st.caption(player1_name)
+        with col2:
+            st.line_chart(charts.prepare_line_chart_data(df2))
+            st.caption(player2_name)
     else:
-        view = st.radio("Chart View", ["Side by Side", "Overlay"], horizontal=True)
+        combined_df = pd.concat(
+            [
+                charts.melt_for_overlay(df1, player1_name),
+                charts.melt_for_overlay(df2, player2_name),
+            ]
+        )
+        st.altair_chart(charts.build_overlay_chart(combined_df), use_container_width=True, theme=None)
 
-        if view == "Side by Side":
-            col1, col2 = st.columns(2)
-            with col1:
-                st.line_chart(charts.prepare_line_chart_data(df1))
-                st.caption(player1_name)
-            with col2:
-                st.line_chart(charts.prepare_line_chart_data(df2))
-                st.caption(player2_name)
-        else:
-            combined_df = pd.concat(
-                [
-                    charts.melt_for_overlay(df1, player1_name),
-                    charts.melt_for_overlay(df2, player2_name),
-                ]
-            )
-            st.altair_chart(charts.build_overlay_chart(combined_df), use_container_width=True, theme=None)
-
-        st.subheader("Advanced Metrics")
-        row1 = metrics.extract_player_advanced_row(advanced_df, player1_id)
-        row2 = metrics.extract_player_advanced_row(advanced_df, player2_id)
-        player_stats = {
-            player1_name: {
-                **metrics.select_advanced_columns(row1),
-                **metrics.season_per36_totals(df1),
-            },
-            player2_name: {
-                **metrics.select_advanced_columns(row2),
-                **metrics.season_per36_totals(df2),
-            },
-        }
-        table_col, note_col = st.columns([2, 1])
-        with table_col:
-            st.dataframe(metrics.build_comparison_table(player_stats), use_container_width=True)
-        with note_col:
-            st.markdown("**Reading this table**")
-            st.caption(
-                "TS% and USG% come straight from `nba_api`'s Advanced measure type. "
-                "PACE is the team's estimated possessions per 48 minutes while the "
-                "player is on the floor. PIE is the league's own share-of-game-events "
-                "metric. Per-36 rates are computed from this season's game log, not "
-                "a separate API call."
-            )
+    st.subheader("Advanced Metrics")
+    row1 = metrics.extract_player_advanced_row(advanced_df, player1_id)
+    row2 = metrics.extract_player_advanced_row(advanced_df, player2_id)
+    player_stats = {
+        player1_name: {
+            **metrics.select_advanced_columns(row1),
+            **metrics.season_per36_totals(df1),
+        },
+        player2_name: {
+            **metrics.select_advanced_columns(row2),
+            **metrics.season_per36_totals(df2),
+        },
+    }
+    table_col, note_col = st.columns([2, 1])
+    with table_col:
+        st.dataframe(metrics.build_comparison_table(player_stats), use_container_width=True)
+    with note_col:
+        st.markdown("**Reading this table**")
+        st.caption(
+            "TS% and USG% come straight from `nba_api`'s Advanced measure type. "
+            "PACE is the team's estimated possessions per 48 minutes while the "
+            "player is on the floor. PIE is the league's own share-of-game-events "
+            "metric. Per-36 rates are computed from this season's game log, not "
+            "a separate API call."
+        )
 
 elif page == "Insights":
     st.subheader("Insights")
@@ -224,9 +233,7 @@ elif page == "Insights":
     except data.PlayerStatsFetchError as exc:
         _stop_with_fetch_error(exc, "insights_season", ["insights_player"])
 
-    if game_log_df.empty:
-        st.error(f"No {season} game data for {player_name}.")
-        st.stop()
+    _stop_if_no_games({player_name: game_log_df}, season)
 
     # PlayerGameLog has no TEAM_ID column -- derive it from the player's own
     # MATCHUP abbreviation instead (first token, before "vs."/"@").
@@ -415,9 +422,7 @@ elif page == "Predictions":
 
     _show_sample_banner(sample_log)
 
-    if game_log_df.empty:
-        st.error(f"No {season} game data for {player_name}.")
-        st.stop()
+    _stop_if_no_games({player_name: game_log_df}, season)
 
     tab_model, tab_forecast = st.tabs(["Next-Game Points Model", "Season Forecast"])
 

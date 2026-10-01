@@ -113,7 +113,7 @@ def _with_sample_fallback(live_fn, sample_fn, *args):
         return sample, True
 
 
-_live_cached = st.cache_data(ttl=CACHE_TTL_SECONDS)
+_live_cached = st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner="Fetching live NBA data...")
 
 
 def _get_all_players_uncached() -> list[dict]:
