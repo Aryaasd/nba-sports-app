@@ -19,6 +19,7 @@ An interactive Streamlit app for comparing NBA players, testing hypotheses about
 ## Key Features
 
 * **Compare Two Players:** season game logs for any two players, side by side or overlaid.
+* **Contract Value:** whether each compared player is paid more or less than his 2025-26 production implies. The verdict comes from a cross-validated salary model. Rookie-scale, minimum-level, max, and partial-season deals are labeled rather than judged, because their pay isn't a free-market price.
 * **Advanced Metrics:** TS%, USG%, PACE, and PIE from `nba_api`'s advanced stats, plus hand-computed per-36 rates.
 * **Insights:** four hypothesis-driven analyses for one player-season:
   * **Absence & Rest Impact** — performance in the games right after missed time, compared with the player's own season baseline.
@@ -75,6 +76,49 @@ Each player's season is treated as a time series. At every game *k*, three forec
 - Smoothing ties the season-to-date average, and both beat "last game carried forward" by about 22%.
 - **The median fitted smoothing weight is 0**: for the typical player, the best forecast puts no extra weight on recent games. That's the hot-hand question asked per game instead of per shot, with the same answer — recent form carries little signal beyond a player's season level.
 
+### Contract value: production-implied salary
+
+**Setup**
+- **Data:** standard 2025-26 contracts (cap hits) from the [BALLDONTLIE API](https://www.balldontlie.io/), whose terms allow publishing and modeling it. Salary sites whose terms forbid scraping or predictive use were deliberately avoided.
+  - The source has no two-way contracts.
+  - A player waived mid-season appears only with his final contract.
+- **Join:** contracts are joined to 2025-26 `nba_api` stats by normalized name, plus seven nickname aliases.
+  - 493 of 505 contracts matched; the other 12 players didn't play that season.
+  - In the other direction, 89 players with minutes have no contract on file (mostly two-way players), and 15 of them played enough to judge. The app says so instead of guessing.
+- **Model:** it predicts log salary from minutes, points, rebounds, assists, usage, true shooting, PIE, and age.
+- **Training set:** salaries are only market prices between the league's floor and ceiling, so the model learns from **154 market-priced contracts plus 36 max deals**. These are left out:
+  - **rookie-scale deals**, set by the league's pay scale (identified exactly from contract type, not guessed from draft year);
+  - **minimum-level deals**, up to $3.63M (the top of the minimum-salary scale), which sit on a price floor;
+  - **ten-day and rest-of-season deals**, whose cap hit isn't an annual salary;
+  - **players with under 20 games or 10 minutes a game.**
+
+  Players outside the training set are still valued; they just never get an over/underpaid verdict.
+
+| Model (5-fold CV × 10 repeats, scored on the 154 market-priced contracts) | Typical miss | Median % error | R² (log salary) | Max deals priced well below |
+|---|---:|---:|---:|---:|
+| Minutes only (baseline) | 1.55x | 37% | 0.13 | 61% |
+| **Ridge regression** | **1.52x** | **35%** | **0.26** | 28% |
+| Censored (Tobit) regression, max deals read as lower bounds | 1.57x | 36% | 0.16 | 8% |
+
+**Choices the data settled**
+- **Minimum deals as bounds failed.** A two-sided censored regression read minimum deals as "worth *at most* the minimum" and max deals as "worth *at least* the max". It collapsed: typical miss 2.17x, R² below zero. Plenty of productive veterans sign for the minimum to join a contender, so that bound simply isn't true.
+- **Max deals stay in, as real prices.** Dropping them left the model blind to star salaries: it called Stephen Curry and Cade Cunningham overpaid. Keeping them as signed prices was the most accurate option. It's also right for this question: a max deal was the market's price when signed, so a star who has declined since really is paid above his current production.
+
+**How verdicts work**
+- Every player is valued **out-of-fold**, by models that never saw his own salary. The result is averaged over 10 repeated cross-validation runs, so a verdict doesn't depend on one random fold split.
+- A gap within the model's typical miss (1.52x either way) counts as **fairly paid**. Only bigger gaps are called above or below production.
+- **Labels instead of verdicts:**
+  - Rookie-scale, minimum-level, and partial-season deals get a label, not a verdict.
+  - So does a max player whose production prices *above* his salary ("Max contract"): the cap, not the market, holds his pay down.
+
+**What this shows**
+- **Box-score production explains only about a quarter of the variation in market-priced salaries,** barely more than minutes alone. Most of what the market prices is invisible in one season's box score: past seasons, projected growth, injury history, and when a player hit free agency.
+- **The verdicts are balanced (37 above production, 36 below), and the extremes are recognizable.**
+  - Above production: Khris Middleton, Jalen Suggs, Isaiah Hartenstein.
+  - Below production: Kevin Porter Jr., Ryan Rollins, Saddiq Bey.
+- **Known blind spot:** box scores capture defense poorly, so defensive specialists such as Evan Mobley and OG Anunoby can look paid above their production.
+- **The model learns what the market pays for, not what wins games.** "Paid above production" means priced differently from the market, not a bad contract.
+
 ### Limitations
 
 * Box scores only. There's no injury, minutes-restriction, opponent, or lineup information; no free source exists for the first two.
@@ -82,15 +126,15 @@ Each player's season is treated as a time series. At every game *k*, three forec
 * The next-game projection needs rest days and home/away as user inputs, because the app has no schedule feed.
 * Point forecasts only; no prediction intervals.
 
-Reproduce the numbers with `python -m scripts.train_model` (about 10s) and `python -m scripts.evaluate_forecast` (about 1 min). Both pull live data, so run them from a non-cloud machine.
+Reproduce the numbers with `python -m scripts.train_model` (about 10s), `python -m scripts.evaluate_forecast` (about 1 min), and `python -m scripts.train_contract_model` (seconds; runs on the committed contract snapshot). The first two pull live data, so run them from a non-cloud machine.
 
 ---
 
 ## Tech Stack
 
 * **Core:** Python, Streamlit
-* **Data:** Pandas, NumPy, `nba_api`, Parquet (bundled snapshot)
-* **Modeling:** scikit-learn (Ridge, random forest, `TimeSeriesSplit`; training only), statsmodels (exponential smoothing), cluster bootstrap for confidence intervals
+* **Data:** Pandas, NumPy, `nba_api`, BALLDONTLIE API (contracts), Parquet (bundled snapshots)
+* **Modeling:** scikit-learn (Ridge, random forest, `TimeSeriesSplit`; training only), statsmodels (exponential smoothing), SciPy (a hand-written censored/Tobit regression), cluster bootstrap for confidence intervals
 * **Visualization:** Altair
 * **Testing/CI:** pytest, ruff, GitHub Actions
 
@@ -145,7 +189,9 @@ The app is split into small, single-purpose modules:
   * Each feature is built from the player's own earlier games only: shifted one game, computed per player, and requiring a full window.
   * The model ships as plain JSON coefficients (`model/next_game_points.json`), so the deployed app doesn't need scikit-learn.
 * **`model_training.py`** — date-block time-series CV, model fitting, player-clustered bootstrap CIs, and coefficient export (scikit-learn).
-* **`insights/`** — one module per analysis (`absence.py`, `defense_tiers.py`, `hot_hand.py`, `shot_chart.py`, `forecast.py`). Each is honest about a real data limitation:
+* **`contract_training.py`** — the contract-value pipeline: training-set rules, cross-validated model comparison, and out-of-fold valuation (scikit-learn; offline only).
+* **`contract_data/`** — the dated contracts snapshot and precomputed contract values. The app reads results only, so it never needs an API key. See [`contract_data/README.md`](contract_data/README.md).
+* **`insights/`** — one module per analysis (`absence.py`, `defense_tiers.py`, `hot_hand.py`, `shot_chart.py`, `forecast.py`, `contract_value.py`). Each is honest about a real data limitation:
   * No free injury-designation feed exists, so **Absence & Rest Impact** measures games missed, never *why* they were missed.
   * Defensive-scheme data is proprietary, so **Performance vs. Defense** buckets opponents by measured `DEF_RATING` instead.
   * **Hot Hand** shuffles each game's own shot sequence thousands of times, to sidestep the selection bias in the original 1985 analysis.
@@ -155,6 +201,8 @@ The app is split into small, single-purpose modules:
   * `train_model` — trains and evaluates the model, and writes the JSON.
   * `evaluate_forecast` — the league-wide forecast table above.
   * `capture_sample_data` — refreshes the snapshot.
+  * `fetch_contracts` — one-time pull of 2025-26 contracts (needs a BALLDONTLIE key).
+  * `train_contract_model` — joins contracts to stats, cross-validates, and writes the contract values.
 * **`charts.py`** — Altair chart builders and a dark theme with colorblind-safe categorical and diverging colors.
 * **`sports_app.py`** — thin Streamlit UI glue, with no data-fetching or stat-math logic of its own.
 
@@ -170,6 +218,8 @@ ruff check .
 
 Every logic module is unit tested with mocked `nba_api` calls, so tests never hit the network. The tests that matter most guard the evaluation itself:
 * CV folds never train on a date at or after their validation dates.
+* No player's own salary ever informs his contract valuation.
+* The censored regression recovers a known slope on simulated data, where the naive fits are biased.
 * Walk-forward forecasts never see the game they predict.
 * Rolling features never include the current game or another player's history.
 * The exported JSON coefficients reproduce scikit-learn's predictions.

@@ -1,0 +1,52 @@
+{
+  "season": "2025-26",
+  "salary_cap": 154647000,
+  "source": "BALLDONTLIE API contracts endpoints (balldontlie.io), pulled 2026-10-01",
+  "n_salary_rows": 505,
+  "n_joined": 493,
+  "n_unmatched": 12,
+  "n_players_with_minutes_without_contract": 89,
+  "n_qualified_without_contract": 15,
+  "n_pool": 190,
+  "n_market_priced": 154,
+  "n_max_deals": 36,
+  "cv_splits": 5,
+  "cv_repeats": 10,
+  "cv_metrics": {
+    "baseline_minutes_only": {
+      "mae_log": 0.4400456048642062,
+      "typical_ratio": 1.5527780311278758,
+      "median_abs_pct_error": 0.36634299388660907,
+      "r2_log": 0.12742714806642352,
+      "max_deals_priced_below": 0.6111111111111112
+    },
+    "ridge": {
+      "mae_log": 0.4212357327321194,
+      "typical_ratio": 1.5238434558533211,
+      "median_abs_pct_error": 0.35384659672208607,
+      "r2_log": 0.25666580062243494,
+      "max_deals_priced_below": 0.2777777777777778
+    },
+    "censored_regression": {
+      "mae_log": 0.4486507559075373,
+      "typical_ratio": 1.5661975764214524,
+      "median_abs_pct_error": 0.3599846795114099,
+      "r2_log": 0.15693971311709887,
+      "max_deals_priced_below": 0.08333333333333333
+    }
+  },
+  "shipped_model": "ridge",
+  "typical_log_error": 0.4212357327321194,
+  "label_counts": {
+    "Fairly paid": 106,
+    "Rookie-scale contract": 90,
+    "Minimum-level contract": 81,
+    "Partial-season deal": 71,
+    "Not enough minutes to judge": 61,
+    "Paid above production": 37,
+    "Paid below production": 36,
+    "Max contract": 11
+  },
+  "sklearn_version": "1.9.1",
+  "created": "2026-10-01"
+}

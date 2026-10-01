@@ -40,11 +40,13 @@ def test_build_overlay_chart_returns_alt_chart_with_expected_encoding():
     df1 = charts.melt_for_overlay(_sample_game_log(), "LeBron James")
     df2 = charts.melt_for_overlay(_sample_game_log(), "Kevin Durant")
     combined = pd.concat([df1, df2])
-    chart = charts.build_overlay_chart(combined)
+    chart = charts.build_overlay_chart(combined, ["LeBron James", "Kevin Durant"])
     assert isinstance(chart, alt.Chart)
     assert chart.encoding.x.shorthand == "GAME_DATE:T"
     assert chart.encoding.color.shorthand == "Player:N"
     assert chart.encoding.strokeDash.shorthand == "Stat:N"
+    # Player 1 stays blue even though "Kevin Durant" sorts first alphabetically.
+    assert chart.to_dict()["encoding"]["color"]["scale"]["domain"] == ["LeBron James", "Kevin Durant"]
 
 
 def test_build_null_distribution_chart_returns_layered_chart():
@@ -90,6 +92,27 @@ def test_build_backtest_chart_layers_and_series_colors():
     color_scale = spec["layer"][0]["encoding"]["color"]["scale"]
     assert color_scale["domain"] == order
     assert color_scale["range"] == [charts.SERIES_NEUTRAL, charts.SERIES_BLUE, charts.SERIES_ORANGE]
+
+
+def test_build_contract_value_chart_highlights_both_players_in_fixed_slots():
+    values = pd.DataFrame(
+        {
+            "PLAYER_ID": [1, 2, 3, 4],
+            "PLAYER_NAME": ["A", "B", "C", "D"],
+            "SALARY": [50e6, 2e6, 20e6, 8e6],
+            "IMPLIED_SALARY": [30e6, 6e6, 21e6, 7e6],
+            "LABEL": ["Paid above production", "Paid below production", "Fairly paid", "Fairly paid"],
+        }
+    )
+    chart = charts.build_contract_value_chart(values, {3: "C", 1: "A"}, typical_ratio=1.5)
+    assert isinstance(chart, alt.LayerChart)
+    assert len(chart.layer) == 6  # fair band, diagonal, league dots, highlighted players, two labels
+    color = chart.to_dict()["layer"][3]["encoding"]["color"]["scale"]
+    assert color == {"domain": ["C", "A"], "range": [charts.SERIES_BLUE, charts.SERIES_ORANGE]}
+
+    # Player 2 keeps orange even when Player 1 isn't on the chart.
+    unplotted = charts.build_contract_value_chart(values, {99: "Not Plotted", 1: "A"}, typical_ratio=1.5)
+    assert unplotted.to_dict()["layer"][3]["encoding"]["color"]["scale"]["domain"] == ["Not Plotted", "A"]
 
 
 def test_build_defense_tier_chart_encodes_tier_and_value():

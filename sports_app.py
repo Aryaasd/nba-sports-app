@@ -6,7 +6,7 @@ import data
 import metrics
 import modeling
 import sample_data_loader
-from insights import absence, defense_tiers, forecast, hot_hand, shot_chart
+from insights import absence, contract_value, defense_tiers, forecast, hot_hand, shot_chart
 
 st.set_page_config(page_title="NBA Sports App", layout="wide")
 
@@ -50,7 +50,68 @@ def _select_sample_data(season_key: str, player_keys: list[str]) -> None:
         st.session_state[key] = name
 
 
-def _stop_with_fetch_error(exc: Exception, season_key: str, player_keys: list[str]) -> None:
+def _render_contract_value(compared: dict[int, str]) -> None:
+    """Needs no live data (it reads a committed snapshot), so it renders even when the stats
+    API is unreachable -- and for any selected season, labeled with the one it covers."""
+    season = contract_value.CONTRACT_SEASON
+    st.subheader(f"Contract Value ({season})")
+    values = contract_value.load_contract_values()
+    summary = contract_value.load_model_summary()
+    if values is None or summary is None:
+        st.info("Contract values haven't been built yet -- run `python -m scripts.train_contract_model`.")
+        return
+    shipped = summary["shipped_model"]
+    typical_ratio = summary["cv_metrics"][shipped]["typical_ratio"]
+    # A partial-season cap hit isn't a salary, so it doesn't belong on a salary axis.
+    plotted = values[values["QUALIFIED"] & ~values["PARTIAL_DEAL"]]
+
+    verdict_col, chart_col = st.columns([2, 3])
+    with verdict_col:
+        for player_id, name in compared.items():
+            st.markdown(f"**{name}**")
+            match = values[values["PLAYER_ID"] == player_id]
+            if match.empty:
+                st.caption(
+                    f"No {season} contract on file: he didn't play that season, or was on a two-way "
+                    "deal, which the data source doesn't include."
+                )
+                continue
+            row = match.iloc[0]
+            salary_col, implied_col = st.columns(2)
+            salary_col.metric(
+                "Cap hit (partial season)" if row.PARTIAL_DEAL else "Salary",
+                contract_value.format_millions(row.SALARY),
+            )
+            # Only figures the model stands behind: not for players it declines to value.
+            if row.LABEL in contract_value.VALUED_LABELS:
+                implied_col.metric("Production implies", contract_value.format_millions(row.IMPLIED_SALARY))
+            result = {"label": row.LABEL, "ratio": row.RATIO}
+            sentence = contract_value.describe_verdict(result, row.IMPLIED_SALARY)
+            # Escaped: Streamlit markdown reads text between two "$" signs as LaTeX math.
+            escaped = sentence.replace("$", r"\$")
+            st.write(f"**{row.LABEL}.** {escaped}")
+    with chart_col:
+        st.altair_chart(
+            charts.build_contract_value_chart(plotted, compared, typical_ratio),
+            use_container_width=True,
+            theme=None,
+        )
+        missing = [name for player_id, name in compared.items() if player_id not in set(plotted["PLAYER_ID"])]
+        if missing:
+            st.caption(f"Not plotted: {' or '.join(missing)} (no full-season contract with enough minutes).")
+    st.caption(
+        f"Production-implied salary: a {contract_value.MODEL_LABELS[shipped]} of log salary on minutes, "
+        "scoring, rebounding, assists, usage, true shooting, PIE, and age, learned from "
+        f"{summary['n_market_priced']} market-priced contracts plus {summary['n_max_deals']} max deals. "
+        "Rookie-scale, minimum-level, and partial-season deals don't follow market prices, so they're "
+        "valued but never judged. Each player is valued by a model that never saw his own salary, and a "
+        f"gap within its typical miss ({typical_ratio:.2f}x) counts as fairly paid. Box scores capture "
+        "defense poorly, so defensive specialists can look overpaid, and contracts price past and "
+        f"expected seasons, not just this one. Salaries: {summary['source']}."
+    )
+
+
+def _show_fetch_error(exc: Exception, season_key: str, player_keys: list[str]) -> None:
     st.error(
         "Couldn't load live NBA data for this selection -- the NBA stats API didn't respond. "
         "It blocks many cloud servers (including the one this demo is hosted on) and briefly "
@@ -64,6 +125,10 @@ def _stop_with_fetch_error(exc: Exception, season_key: str, player_keys: list[st
     )
     with st.expander("Error details"):
         st.code(str(exc), language=None)
+
+
+def _stop_with_fetch_error(exc: Exception, season_key: str, player_keys: list[str]) -> None:
+    _show_fetch_error(exc, season_key, player_keys)
     st.stop()
 
 
@@ -113,8 +178,8 @@ if page == "Home":
         st.markdown("**Compare Players**")
         st.write(
             "Season game logs for any two players, charted side by side or "
-            "overlaid. PTS, REB, and AST by game, sorted and cached so switching "
-            "views is instant."
+            "overlaid, plus whether each is paid more or less than his "
+            "production implies."
         )
     with col2:
         st.markdown("**Advanced Metrics**")
@@ -157,13 +222,16 @@ elif page == "Compare Players":
 
     player1_id = metrics.get_player_id(player_index, player1_name)
     player2_id = metrics.get_player_id(player_index, player2_name)
+    compared = {player1_id: player1_name, player2_id: player2_name}
 
     try:
         df1, sample1 = data.fetch_player_game_log(player1_id, season)
         df2, sample2 = data.fetch_player_game_log(player2_id, season)
         advanced_df, sample_advanced = data.fetch_advanced_stats(season)
     except data.PlayerStatsFetchError as exc:
-        _stop_with_fetch_error(exc, "compare_season", ["compare_player1", "compare_player2"])
+        _show_fetch_error(exc, "compare_season", ["compare_player1", "compare_player2"])
+        _render_contract_value(compared)
+        st.stop()
 
     _show_sample_banner(sample1, sample2, sample_advanced)
 
@@ -186,7 +254,11 @@ elif page == "Compare Players":
                 charts.melt_for_overlay(df2, player2_name),
             ]
         )
-        st.altair_chart(charts.build_overlay_chart(combined_df), use_container_width=True, theme=None)
+        st.altair_chart(
+            charts.build_overlay_chart(combined_df, [player1_name, player2_name]),
+            use_container_width=True,
+            theme=None,
+        )
 
     st.subheader("Advanced Metrics")
     row1 = metrics.extract_player_advanced_row(advanced_df, player1_id)
@@ -213,6 +285,8 @@ elif page == "Compare Players":
             "metric. Per-36 rates are computed from this season's game log, not "
             "a separate API call."
         )
+
+    _render_contract_value(compared)
 
 elif page == "Insights":
     st.subheader("Insights")

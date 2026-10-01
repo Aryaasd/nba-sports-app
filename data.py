@@ -13,6 +13,7 @@ import pandas as pd
 import requests
 import streamlit as st
 from nba_api.stats.endpoints import (
+    leaguedashplayerbiostats,
     leaguedashplayerstats,
     leaguedashteamstats,
     playergamelog,
@@ -296,3 +297,26 @@ def fetch_league_game_logs(season: str, timeout: int = LEAGUE_REQUEST_TIMEOUT_SE
         raise PlayerStatsFetchError(f"Could not fetch league game logs for season {season}: {exc}") from exc
     df = df[[c for c in LEAGUE_GAME_LOG_COLUMNS if c in df.columns]]
     return metrics.parse_and_sort_game_log(df, date_format=None)
+
+
+PLAYER_BIO_COLUMNS = ["PLAYER_ID", "PTS", "REB", "AST", "DRAFT_YEAR", "DRAFT_ROUND", "DRAFT_NUMBER"]
+
+
+def fetch_player_bio_stats(season: str) -> pd.DataFrame:
+    """Per-game PTS/REB/AST plus draft year/round for every player (contract-value training).
+
+    Offline-only (scripts/train_contract_model.py). per_mode_simple must be explicit:
+    this endpoint defaults to season totals, unlike the per-game minutes in advanced stats.
+    """
+    try:
+        df = _call_with_retries(
+            lambda: leaguedashplayerbiostats.LeagueDashPlayerBioStats(
+                season=season,
+                per_mode_simple="PerGame",
+                season_type_all_star="Regular Season",
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            ).get_data_frames()[0]
+        )
+    except Exception as exc:
+        raise PlayerStatsFetchError(f"Could not fetch player bio stats for season {season}: {exc}") from exc
+    return df[[c for c in PLAYER_BIO_COLUMNS if c in df.columns]]

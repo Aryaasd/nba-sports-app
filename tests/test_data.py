@@ -379,6 +379,44 @@ def test_fetch_league_game_logs_regular_season_iso_dates_sorted(monkeypatch):
     assert result["GAME_DATE"].is_monotonic_increasing
 
 
+class _FakeBioStats:
+    last_kwargs: dict = {}
+
+    def __init__(self, **kwargs):
+        _FakeBioStats.last_kwargs = kwargs
+
+    def get_data_frames(self):
+        df = pd.DataFrame(
+            {
+                "PLAYER_ID": [203999],
+                "PLAYER_NAME": ["Nikola Jokić"],
+                "PTS": [27.7],
+                "REB": [12.9],
+                "AST": [10.7],
+                "DRAFT_YEAR": ["2014"],
+                "DRAFT_ROUND": ["2"],
+                "DRAFT_NUMBER": ["41"],
+                "COLLEGE": ["None"],
+            }
+        )
+        return [df]
+
+
+def test_fetch_player_bio_stats_requests_per_game_regular_season(monkeypatch):
+    monkeypatch.setattr(data.leaguedashplayerbiostats, "LeagueDashPlayerBioStats", _FakeBioStats)
+    result = data.fetch_player_bio_stats("2025-26")
+    # The endpoint defaults to season totals; per-game must be asked for explicitly.
+    assert _FakeBioStats.last_kwargs["per_mode_simple"] == "PerGame"
+    assert _FakeBioStats.last_kwargs["season_type_all_star"] == "Regular Season"
+    assert list(result.columns) == data.PLAYER_BIO_COLUMNS
+
+
+def test_fetch_player_bio_stats_wraps_exception(monkeypatch):
+    monkeypatch.setattr(data.leaguedashplayerbiostats, "LeagueDashPlayerBioStats", _RaisesOnInit)
+    with pytest.raises(data.PlayerStatsFetchError):
+        data.fetch_player_bio_stats("2025-26")
+
+
 def test_fetch_league_game_logs_wraps_exception(monkeypatch):
     monkeypatch.setattr(data.playergamelogs, "PlayerGameLogs", _RaisesOnInit)
     with pytest.raises(data.PlayerStatsFetchError):

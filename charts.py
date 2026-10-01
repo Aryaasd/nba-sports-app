@@ -70,16 +70,22 @@ def melt_for_overlay(df: pd.DataFrame, player_name: str, stat_cols: list[str] | 
     return melted
 
 
-def build_overlay_chart(combined_df: pd.DataFrame) -> alt.Chart:
+def build_overlay_chart(combined_df: pd.DataFrame, player_order: list[str]) -> alt.Chart:
     """Two-player overlay: color by player (fixed categorical slots 1 & 2),
-    line style by stat, returned unrendered."""
+    line style by stat, returned unrendered.
+
+    `player_order` pins Player 1 to blue and Player 2 to orange; without an explicit
+    domain Vega sorts names alphabetically, so colors would swap between charts.
+    """
     return (
         alt.Chart(combined_df)
         .mark_line(point=True, strokeWidth=2)
         .encode(
             x="GAME_DATE:T",
             y="Value:Q",
-            color=alt.Color("Player:N", scale=alt.Scale(range=[SERIES_BLUE, SERIES_ORANGE])),
+            color=alt.Color(
+                "Player:N", scale=alt.Scale(domain=player_order, range=[SERIES_BLUE, SERIES_ORANGE])
+            ),
             strokeDash="Stat:N",  # different line style for PTS/REB/AST
             tooltip=["GAME_DATE:T", "Player", "Stat", "Value"],
         )
@@ -181,6 +187,63 @@ def build_backtest_chart(long_df: pd.DataFrame, series_order: list[str], y_title
         .add_params(hover)
     )
     return (dots + lines + crosshair).properties(height=340)
+
+
+def build_contract_value_chart(
+    values_df: pd.DataFrame, highlight: dict[int, str], typical_ratio: float
+) -> alt.LayerChart:
+    """Actual salary vs. production-implied salary for every judged player, log-log.
+
+    The shaded band is "fairly paid" (within the model's typical miss of the diagonal);
+    dots above it are paid more than production implies, below it less. The two
+    compared players keep their fixed categorical slots (blue, orange).
+    """
+    league = values_df.assign(Salary=values_df["SALARY"] / 1e6, Implied=values_df["IMPLIED_SALARY"] / 1e6)
+    both = league[["Salary", "Implied"]]
+    low, high = both.min().min() * 0.8, both.max().max() * 1.2
+    # nice=False: Vega would otherwise round each log axis out to a power of ten on its own,
+    # leaving the two axes on different ranges and the diagonal off-center.
+    scale = alt.Scale(type="log", domain=[low, high], nice=False)
+    x = alt.X("Implied:Q", scale=scale, title="Production implies ($M)")
+    y = alt.Y("Salary:Q", scale=scale, title="Actual salary ($M)")
+
+    implied = np.geomspace(low, high, 50)
+    diagonal = pd.DataFrame({"Implied": implied, "Salary": implied})
+    diagonal["Low"], diagonal["High"] = implied / typical_ratio, implied * typical_ratio
+    # The band shares the explicit y scale and clips to it: its own low edge sits below the
+    # data, and in a layered chart an unscaled layer would stretch everyone's y domain.
+    band = alt.Chart(diagonal).mark_area(color=DIVERGING_NEUTRAL, opacity=0.5, clip=True)
+    band = band.encode(x=x, y=alt.Y("Low:Q", scale=scale, title="Actual salary ($M)"), y2="High:Q")
+    line = alt.Chart(diagonal).mark_line(color=_DARK_TEXT_SECONDARY, strokeDash=[6, 4], strokeWidth=1)
+    line = line.encode(x=x, y=y)
+
+    tooltip = [
+        alt.Tooltip("PLAYER_NAME:N", title="Player"),
+        alt.Tooltip("Salary:Q", format="$.1f", title="Salary ($M)"),
+        alt.Tooltip("Implied:Q", format="$.1f", title="Production implies ($M)"),
+        alt.Tooltip("LABEL:N", title="Verdict"),
+    ]
+    dots = alt.Chart(league).mark_circle(size=40, color=SERIES_NEUTRAL, opacity=0.55)
+    dots = dots.encode(x=x, y=y, tooltip=tooltip)
+
+    picked = league[league["PLAYER_ID"].isin(highlight)]
+    picked = picked.assign(Player=picked["PLAYER_ID"].map(highlight))
+    player_color = alt.Color(
+        "Player:N",
+        scale=alt.Scale(domain=list(highlight.values()), range=[SERIES_BLUE, SERIES_ORANGE]),
+        legend=alt.Legend(title=None, orient="top"),
+    )
+    marked = alt.Chart(picked).mark_circle(size=160, opacity=1, stroke=_DARK_SURFACE, strokeWidth=2)
+    marked = marked.encode(x=x, y=y, color=player_color, tooltip=tooltip)
+    # Labels sit left of their dots (the best-paid players crowd the top-right edge, where a
+    # right-hand label would clip), first player above and second below so close dots stay legible.
+    label_layers = []
+    for name, dy in zip(highlight.values(), [-12, 16]):
+        text = alt.Chart(picked[picked["Player"] == name]).mark_text(
+            align="right", dx=-12, dy=dy, fontSize=12, color=_DARK_TEXT_PRIMARY
+        )
+        label_layers.append(text.encode(x=x, y=y, text="Player:N"))
+    return alt.layer(band, line, dots, marked, *label_layers).properties(height=380)
 
 
 def build_defense_tier_chart(tier_result: pd.DataFrame) -> alt.Chart:
