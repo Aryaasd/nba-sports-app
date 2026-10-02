@@ -315,7 +315,8 @@ except data.PlayerStatsFetchError as exc:
 player_index = metrics.build_player_index(all_players)
 player_names = metrics.get_player_names(all_players)
 seasons = metrics.get_recent_seasons()
-default_season = metrics.get_default_season()
+# Without live data (the hosted demo), only the snapshot's season has anything to show.
+default_season = metrics.get_default_season() if data.LIVE_API_ENABLED else sample_data_loader.SAMPLE_SEASON
 
 if page == "Home":
     st.html(

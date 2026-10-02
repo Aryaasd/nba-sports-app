@@ -1,6 +1,6 @@
-# NBA Player Stats App
+# NBA Sports App: the box score, cross-examined
 
-An interactive Streamlit app for comparing NBA players, testing hypotheses about their performance, and forecasting their next games. It runs on `nba_api` data, and every model is reported next to the simple baseline it has to beat.
+An interactive Streamlit app for comparing NBA players, testing hypotheses about their performance, forecasting their next games, and checking whether their contracts match their production. It runs on `nba_api` data, and every model is reported next to the simple baseline it has to beat.
 
 [![CI](https://github.com/Aryaasd/nba-sports-app/actions/workflows/ci.yml/badge.svg)](https://github.com/Aryaasd/nba-sports-app/actions/workflows/ci.yml)
 
@@ -10,7 +10,7 @@ An interactive Streamlit app for comparing NBA players, testing hypotheses about
 
 **[Try it live](https://nba-sports-app-jneksyc8sa3dsvprpkbxdq.streamlit.app/)**
 
-> **About the hosted demo:** `stats.nba.com` blocks requests from most cloud hosts, including Streamlit Community Cloud. So the hosted app doesn't wait on it: it detects Streamlit Cloud and goes straight to a bundled **real** snapshot (LeBron James and Stephen Curry, 2025-26), with a banner saying so. They're also the default players, so on the snapshot's season every page opens on working data. Any other selection shows an error, with a one-click switch back to the snapshot, rather than made-up data. Run it locally (see below) for live data on every player; anywhere else, live calls fall back to the snapshot only if the API stops responding. `NBA_API_LIVE=1` or `0` overrides the detection.
+> **About the hosted demo:** `stats.nba.com` blocks Streamlit Community Cloud, so the hosted app runs on a bundled **real** snapshot: LeBron James and Stephen Curry, 2025-26, the default selections. A banner says so, and any other selection shows an error (with a one-click switch back) rather than made-up data. [Run it locally](#getting-started) for live data on every player and season.
 
 ![demo](docs/demo.gif)
 
@@ -18,7 +18,7 @@ An interactive Streamlit app for comparing NBA players, testing hypotheses about
 
 ## Key Features
 
-* **Compare Two Players:** season game logs for any two players, side by side or overlaid.
+* **Compare Two Players:** a face-off of player cards (headshot, team colors, season line), then every game of the season. Pick points, rebounds, or assists to compare both players on one chart or side by side on shared axes, or all three stats per player.
 * **Contract Value:** whether each compared player is paid more or less than his 2025-26 production implies. The verdict comes from a cross-validated salary model. Rookie-scale, minimum-level, max, and partial-season deals are labeled rather than judged, because their pay isn't a free-market price.
 * **Advanced Metrics:** TS%, USG%, PACE, and PIE from `nba_api`'s advanced stats, plus hand-computed per-36 rates.
 * **Insights:** four hypothesis-driven analyses for one player-season:
@@ -29,7 +29,8 @@ An interactive Streamlit app for comparing NBA players, testing hypotheses about
 * **Predictions:** two forecasting techniques, each scored only on games it hadn't seen:
   * **Next-Game Points Model** — a Ridge regression trained on 20,932 player-games, evaluated on a full unseen season with bootstrap confidence intervals. It shows a per-player backtest chart and a next-game projection.
   * **Season Forecast** — simple exponential smoothing on one player's own season, validated walk-forward. The fitted smoothing weight is itself a finding (see below).
-* **Resilient demo:** a circuit breaker and a labeled sample-data fallback, so the hosted app never dead-ends on a blocked API.
+* **About page:** where every number comes from, how each page works, the ground rules behind the app, and a results table of each model against its baseline.
+* **Resilient demo:** on Streamlit Cloud the app goes straight to its labeled snapshot instead of waiting on a blocked API; elsewhere, a circuit breaker falls back to it only when the API stops responding.
 
 ---
 
@@ -135,7 +136,7 @@ Reproduce the numbers with `python -m scripts.train_model` (about 10s), `python 
 * **Core:** Python, Streamlit
 * **Data:** Pandas, NumPy, `nba_api`, BALLDONTLIE API (contracts), Parquet (bundled snapshots)
 * **Modeling:** scikit-learn (Ridge, random forest, `TimeSeriesSplit`; training only), statsmodels (exponential smoothing), SciPy (a hand-written censored/Tobit regression), cluster bootstrap for confidence intervals
-* **Visualization:** Altair
+* **Visualization & UI:** Altair, with a custom Streamlit theme and CSS
 * **Testing/CI:** pytest, ruff, GitHub Actions
 
 ---
@@ -183,7 +184,7 @@ Reproduce the numbers with `python -m scripts.train_model` (about 10s), `python 
 
 The app is split into small, single-purpose modules:
 
-* **`data.py`** — every `nba_api` call. Each is cached for an hour with `@st.cache_data`, retried once, and guarded by a circuit breaker: after a network failure, live calls pause for 10 minutes instead of re-waiting out the timeout on every request. On failure it falls back to the bundled snapshot, but only for the exact selections that snapshot covers.
+* **`data.py`** — every `nba_api` call. Each is cached for an hour with `@st.cache_data`, retried once, and guarded by a circuit breaker: after a network failure, live calls pause for 10 minutes instead of re-waiting out the timeout on every request. On failure it falls back to the bundled snapshot, but only for the exact selections that snapshot covers. On Streamlit Community Cloud (detected from its `/mount/src/` app path) it skips live calls entirely; `NBA_API_LIVE=1` or `0` overrides the detection.
 * **`metrics.py`** — pure logic: season strings, player lookup, TS% and per-36 math.
 * **`modeling.py`** — next-game feature engineering and inference, shared by training and the live app so the two can't drift apart.
   * Each feature is built from the player's own earlier games only: shifted one game, computed per player, and requiring a full window.
@@ -203,8 +204,8 @@ The app is split into small, single-purpose modules:
   * `capture_sample_data` — refreshes the snapshot.
   * `fetch_contracts` — one-time pull of 2025-26 contracts (needs a BALLDONTLIE key).
   * `train_contract_model` — joins contracts to stats, cross-validates, and writes the contract values.
-* **`charts.py`** — Altair chart builders and a dark theme with colorblind-safe categorical and diverging colors.
-* **`ui.py` + `ui.css`** — the visual system: a hardwood hero, player cards with NBA.com headshots and team colors, and styling for Streamlit's own widgets. `ui.py` returns escaped HTML strings, so the markup is unit tested; `.streamlit/config.toml` shares the same palette and fonts.
+* **`charts.py`** — Altair chart builders and a matching dark theme. Analysis charts use colorblind-safe categorical and diverging colors; compared players are drawn in their team colors, with every tooltip naming the player.
+* **`ui.py` + `ui.css`** — the visual system: a hardwood hero, player cards with NBA.com headshots and team colors, and styling for Streamlit's own widgets. `ui.py` also picks each player's chart color: his team's, lightened until it stands out on the dark chart, with Player 2 switching to his team's second color when the two would look alike. It returns escaped HTML strings, so the markup is unit tested; `.streamlit/config.toml` shares the same palette and fonts.
 * **`about_page.py`** — the in-app About page: data sources, how each page works, the ground rules, and a results table read from the committed model files.
 * **`sports_app.py`** — thin Streamlit UI glue, with no data-fetching or stat-math logic of its own.
 
@@ -227,7 +228,7 @@ Every logic module is unit tested with mocked `nba_api` calls, so tests never hi
 * The exported JSON coefficients reproduce scikit-learn's predictions.
 * The fallback never serves sample data for a selection outside the snapshot.
 
-The Streamlit UI itself isn't tested; it's kept thin enough that the logic it calls is what's verified.
+The Streamlit page flow itself isn't unit tested; it's kept thin enough that the logic it calls is what's verified. The HTML builders and color logic in `ui.py` are tested, including escaping.
 
 ---
 
@@ -236,7 +237,7 @@ The Streamlit UI itself isn't tested; it's kept thin enough that the logic it ca
 1. Push your fork to GitHub.
 2. Sign in to [share.streamlit.io](https://share.streamlit.io) with GitHub.
 3. Click **New app**, select your repo/branch, and set the entry file to `sports_app.py`.
-4. Deploy.
+4. Deploy. The app detects Streamlit Cloud and uses the bundled snapshot. To try live calls anyway, add `NBA_API_LIVE = "1"` to the app's secrets (root-level secrets become environment variables).
 
 ---
 

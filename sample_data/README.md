@@ -1,9 +1,10 @@
 # Bundled sample data
 
-A small, real snapshot the app falls back to when the live NBA stats API is
-unreachable (stats.nba.com blocks many cloud hosts, including Streamlit
-Community Cloud). The UI labels it clearly whenever it's in use, and any
-selection outside it shows a normal error instead of made-up data.
+A small, real snapshot of NBA stats data. stats.nba.com blocks many cloud hosts,
+so on Streamlit Community Cloud the app serves this snapshot directly; anywhere
+else it falls back to it only when the live API is unreachable. The UI labels it
+clearly whenever it's in use, and any selection outside it shows a normal error
+instead of made-up data.
 
 | | |
 |---|---|
