@@ -1,0 +1,264 @@
+/* Visual system: hardwood under arena lights.
+   Canvas and panels are the dark of an arena's stands; maple is reserved for the
+   floor itself (the Home hero, the strip under page titles) and for the active
+   state. Big Shoulders Display carries titles and numbers, Barlow the reading text,
+   Barlow Condensed the uppercase labels. Barlow and Big Shoulders load through
+   .streamlit/config.toml; only the condensed cut is imported here. */
+@import url("https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&display=swap");
+
+:root {
+  --arena: #111A26;
+  --seat: #182230;
+  --line: #2A3747;
+  --bench: #0C131C;
+  --maple: #D79A55;
+  --maple-light: #E2AD6C;
+  --maple-deep: #B57A3E;
+  --chalk: #F1ECE3;
+  --chalk-dim: #A7B0BC;
+  --paint: #111A26;
+  --display: "Big Shoulders Display", "Barlow Condensed", sans-serif;
+  --body: "Barlow", sans-serif;
+  --label: "Barlow Condensed", "Barlow", sans-serif;
+  /* Boards run across the page; seams every 22px, tone varying board to board. */
+  --planks:
+    repeating-linear-gradient(0deg, rgba(90, 50, 15, .12) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(0deg, #D79A55 0 22px, #E2AD6C 22px 44px, #D39352 44px 66px,
+      #DCA261 66px 88px, #D79A55 88px 110px);
+  /* Stretched fractal noise reads as long grain along each board. */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2400' height='220'%3E%3Cfilter id='g' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.003 0.42' numOctaves='3' seed='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.36 0 0 0 0 0.2 0 0 0 0 0.07 0 0 0 1.1 -0.35'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+/* ---------- Streamlit chrome ---------- */
+
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stMainBlockContainer"] { padding-top: 2.5rem; padding-bottom: 4rem; max-width: 1280px; }
+[data-testid="stHeaderActionElements"] { display: none; }
+[data-testid="stCaptionContainer"] { color: var(--chalk-dim); }
+
+[data-testid="stWidgetLabel"] p {
+  font-family: var(--label); font-weight: 600; text-transform: uppercase;
+  letter-spacing: .08em; font-size: 13px; color: var(--chalk-dim);
+}
+
+[data-testid="stMetric"] {
+  background: var(--seat); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px 12px;
+}
+[data-testid="stMetricLabel"] p {
+  font-family: var(--label); font-weight: 600; text-transform: uppercase;
+  letter-spacing: .08em; font-size: 13px; color: var(--chalk-dim);
+}
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] > div {
+  font-family: var(--display); font-weight: 800; font-size: 2.5rem; line-height: 1.1;
+  font-variant-numeric: tabular-nums; color: var(--chalk);
+}
+/* A row of metrics ends on one line even when only some carry a delta. */
+[data-testid="stElementContainer"]:has(> [data-testid="stMetric"]):only-child { flex: 1 1 auto; }
+[data-testid="stElementContainer"]:only-child > [data-testid="stMetric"] { height: 100%; }
+
+[data-baseweb="tab-list"] { gap: 10px; border-bottom: 1px solid var(--line); }
+button[data-baseweb="tab"] p {
+  font-family: var(--label); font-weight: 600; text-transform: uppercase;
+  letter-spacing: .08em; font-size: 15px; color: var(--chalk-dim);
+}
+button[data-baseweb="tab"][aria-selected="true"] p { color: var(--chalk); }
+button[data-baseweb="tab"]:hover p { color: var(--chalk); }
+[data-baseweb="tab-highlight"] { background: var(--maple); height: 3px; }
+[data-baseweb="tab-border"] { display: none; }
+
+[data-testid="stVegaLiteChart"] { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+
+/* White text on maple fails contrast; the floor's dark ink doesn't. */
+[data-testid="stBaseButton-primary"],
+[data-testid="stBaseButton-primary"] p { color: var(--paint); font-weight: 600; }
+
+/* ---------- Sidebar ---------- */
+
+[data-testid="stSidebar"] { border-right: 1px solid var(--line); }
+
+.brand { padding: 4px 0 10px; }
+.brand-kicker {
+  font-family: var(--label); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .14em; font-size: 12px; color: var(--chalk-dim);
+}
+.brand-name {
+  font-family: var(--display); font-weight: 900; text-transform: uppercase;
+  font-size: 26px; line-height: .95; margin-top: 6px; color: var(--chalk);
+}
+.brand-name span { color: var(--maple); }
+
+.st-key-nav [role="radiogroup"] { width: 100%; }
+.st-key-nav [role="radiogroup"] { gap: 2px; }
+.st-key-nav label[data-baseweb="radio"] {
+  width: 100%; margin: 0; padding: 9px 12px; cursor: pointer;
+  border-left: 3px solid transparent; border-radius: 0 6px 6px 0;
+}
+.st-key-nav label[data-baseweb="radio"] > div:first-child { display: none; }
+.st-key-nav label[data-baseweb="radio"] p {
+  font-family: var(--label); font-weight: 600; text-transform: uppercase;
+  letter-spacing: .08em; font-size: 15px; color: var(--chalk-dim);
+}
+.st-key-nav label[data-baseweb="radio"]:hover p { color: var(--chalk); }
+.st-key-nav label[data-baseweb="radio"]:has(input:checked) { border-left-color: var(--maple); background: var(--seat); }
+.st-key-nav label[data-baseweb="radio"]:has(input:checked) p { color: var(--chalk); }
+.st-key-nav label[data-baseweb="radio"]:has(input:focus-visible) { outline: 2px solid var(--maple); outline-offset: -2px; }
+
+.credits { font-size: 13px; line-height: 1.6; color: var(--chalk-dim); }
+
+/* ---------- Shared pieces ---------- */
+
+.eyebrow {
+  font-family: var(--label); font-weight: 700; text-transform: uppercase;
+  letter-spacing: .14em; font-size: 13px; color: var(--chalk-dim);
+}
+
+.section-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  border-top: 1px solid var(--line); padding-top: 22px; margin-top: 14px;
+}
+.section-head h2 {
+  font-family: var(--display); font-weight: 800; text-transform: uppercase;
+  font-size: 30px; line-height: 1; letter-spacing: .01em; margin: 0; padding: 0; color: var(--chalk);
+}
+
+.page-head h1 {
+  font-family: var(--display); font-weight: 900; text-transform: uppercase;
+  font-size: clamp(42px, 5vw, 64px); line-height: .92; margin: 8px 0 12px; padding: 0; color: var(--chalk);
+}
+.page-head p { color: var(--chalk-dim); font-size: 16px; line-height: 1.5; max-width: 40em; margin: 0; }
+/* A sliver of the floor under every page title, tying each page back to the hero. */
+.page-head::after {
+  content: ""; display: block; height: 5px; margin-top: 22px; border-radius: 3px;
+  background: var(--grain), linear-gradient(90deg, var(--maple-deep), var(--maple) 35%, var(--maple-light) 70%, var(--maple));
+}
+
+.pill {
+  display: inline-block; border: 1px solid var(--maple-deep); color: var(--maple-light);
+  border-radius: 999px; padding: 3px 12px; font-family: var(--label); font-weight: 600;
+  letter-spacing: .08em; text-transform: uppercase; font-size: 12px;
+}
+
+/* ---------- Home ---------- */
+
+.hero {
+  position: relative; overflow: hidden; isolation: isolate;
+  border-radius: 14px; padding: 54px 48px 50px; color: var(--paint);
+  background:
+    radial-gradient(120% 90% at 20% -15%, rgba(255, 244, 222, .40), transparent 55%),
+    radial-gradient(90% 70% at 100% 120%, rgba(70, 36, 8, .32), transparent 60%),
+    var(--grain), var(--planks);
+  box-shadow: 0 28px 60px -30px rgba(0, 0, 0, .85);
+}
+/* Chalk-white court lines: the key, free-throw circle, three-point arc, and rim. A CSS
+   background because st.html's sanitizer strips inline SVG. */
+.hero::before {
+  content: ""; position: absolute; z-index: -1; right: -36px; top: -8px; width: 56%; height: 118%;
+  opacity: .55; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 500 470' fill='none' stroke='%23F7F2E8' stroke-width='5'%3E%3Crect x='170' y='0' width='160' height='190'/%3E%3Ccircle cx='250' cy='190' r='60'/%3E%3Cpath d='M30 0 V140 A237.5 237.5 0 0 0 470 140 V0'/%3E%3Ccircle cx='250' cy='52' r='7.5'/%3E%3Cline x1='220' y1='40' x2='280' y2='40'/%3E%3C/svg%3E") right top / contain no-repeat;
+}
+.hero .eyebrow { color: rgba(17, 26, 38, .72); }
+.hero h1 {
+  font-family: var(--display); font-weight: 900; text-transform: uppercase;
+  font-size: clamp(46px, 6.6vw, 86px); line-height: .9; letter-spacing: .005em;
+  margin: 10px 0 18px; padding: 0; max-width: 9.5em; color: var(--paint);
+}
+.hero p { font-size: 17px; font-weight: 500; line-height: 1.5; max-width: 34em; margin: 0; color: rgba(17, 26, 38, .88); }
+
+[data-testid="stElementContainer"]:has(> [data-testid="stHtml"] > .finding) { flex: 1 1 auto; }
+[data-testid="stHtml"]:has(> .finding) { height: 100%; }
+.finding {
+  height: 100%; background: var(--seat); border: 1px solid var(--line); border-radius: 12px;
+  padding: 20px 20px 16px;
+}
+.finding .eyebrow { color: var(--maple); }
+.finding .figure {
+  font-family: var(--display); font-weight: 800; font-size: 42px; line-height: 1;
+  margin: 12px 0 12px; font-variant-numeric: tabular-nums; color: var(--chalk);
+}
+.finding .figure small { font-size: 22px; font-weight: 700; color: var(--chalk-dim); margin: 0 4px; }
+.finding p { margin: 0; color: var(--chalk-dim); font-size: 15px; line-height: 1.5; }
+
+/* The "go to page" buttons under each finding read as links, not as form controls. */
+[class*="st-key-goto_"] button {
+  background: transparent; border: 0; padding: 0; min-height: 0; color: var(--chalk);
+}
+[class*="st-key-goto_"] button p {
+  font-family: var(--label); font-weight: 600; text-transform: uppercase; letter-spacing: .08em; font-size: 14px;
+}
+[class*="st-key-goto_"] button:hover, [class*="st-key-goto_"] button:hover p { color: var(--maple-light); background: transparent; }
+
+.tile { border-top: 3px solid var(--line); padding-top: 12px; }
+.tile h3 {
+  font-family: var(--label); font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+  font-size: 16px; margin: 0 0 6px; padding: 0; color: var(--chalk);
+}
+.tile p { margin: 0; color: var(--chalk-dim); font-size: 15px; line-height: 1.5; }
+
+/* ---------- Player cards ---------- */
+
+.player-card {
+  container-type: inline-size;
+  position: relative; overflow: hidden; min-height: 196px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end;
+  padding: 18px 0 0 28px; border: 1px solid var(--line); border-radius: 12px;
+  background:
+    radial-gradient(60% 85% at 88% 100%, color-mix(in srgb, var(--glow) 40%, transparent), transparent 70%),
+    var(--seat);
+}
+/* Team colors as two edge stripes, like a jersey's side panel. */
+.player-card::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 8px; background: var(--team); }
+.player-card::after { content: ""; position: absolute; inset: 0 auto 0 8px; width: 4px; background: var(--team2); }
+.pc-body { min-width: 0; padding-bottom: 18px; }
+.pc-name {
+  font-family: var(--display); font-weight: 900; text-transform: uppercase;
+  font-size: 36px; line-height: .95; margin: 6px 0 0; color: var(--chalk);
+}
+.pc-line { display: flex; gap: 26px; margin-top: 16px; }
+.stat .v {
+  font-family: var(--display); font-weight: 800; font-size: 38px; line-height: 1;
+  font-variant-numeric: tabular-nums; color: var(--chalk);
+}
+.stat .k {
+  font-family: var(--label); font-weight: 600; text-transform: uppercase;
+  letter-spacing: .1em; font-size: 12px; margin-top: 4px; color: var(--chalk-dim);
+}
+.pc-note { margin-top: 14px; color: var(--chalk-dim); font-size: 14px; }
+.pc-body .pill { margin-top: 16px; }
+.pc-shot { display: block; width: 200px; height: auto; margin-left: -24px; }
+/* Ties the card to its line color in every chart on the page. */
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; }
+
+.versus {
+  font-family: var(--display); font-weight: 900; font-size: 28px; text-align: center; color: var(--maple);
+}
+
+/* Sized by the card's own width, since it sits in a half or a single column depending on the page. */
+@container (max-width: 440px) {
+  .pc-shot { width: 150px; }
+  .pc-name { font-size: 30px; }
+  .stat .v { font-size: 32px; }
+  .pc-line { gap: 18px; }
+}
+@container (max-width: 360px) {
+  .pc-shot { width: 112px; margin-left: -28px; }
+  .pc-name { font-size: 26px; }
+  .stat .v { font-size: 28px; }
+  .pc-line { gap: 14px; }
+}
+
+@media (max-width: 640px) {
+  .hero { padding: 34px 22px 32px; }
+  .hero::before { opacity: .3; width: 90%; }
+  .player-card { padding-left: 22px; }
+}
+
+/* ---------- Alerts ---------- */
+
+/* Panels with a colored edge instead of Streamlit's tinted fills, which turn muddy on navy. */
+[data-testid="stAlertContainer"] {
+  background: var(--seat); border: 1px solid var(--line); border-left: 4px solid var(--chalk-dim);
+  color: var(--chalk);
+}
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentWarning"]) { border-left-color: var(--maple); }
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentInfo"]) { border-left-color: #3987E5; }
+[data-testid="stAlertContainer"]:has([data-testid="stAlertContentError"]) { border-left-color: #E66767; }
+[data-testid="stAlertContainer"] p { color: var(--chalk); }

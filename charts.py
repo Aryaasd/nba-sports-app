@@ -1,11 +1,11 @@
 """Chart-data prep and Altair chart builders.
 
-Colors come from the validated dark-mode reference palette (dataviz skill,
+Data colors come from the validated dark-mode reference palette (dataviz skill,
 references/palette.md): fixed categorical hue slots for series identity, a
 blue/red diverging pair for polarity (deltas), reserved apart from both. A
 matching Altair theme is registered so every chart's chrome (surface, grid,
-text) sits on the same dark surface as the rest of the app instead of
-rendering as a stray white rectangle against it.
+text, fonts) uses the app's panel color and type (ui.css) instead of rendering
+as a stray white rectangle against it.
 """
 from __future__ import annotations
 
@@ -22,16 +22,19 @@ SERIES_ORANGE = "#d95926"
 # Diverging pair (dark mode) -- polarity around a baseline (e.g. return-game deltas).
 DIVERGING_NEGATIVE = "#3987e5"  # below baseline
 DIVERGING_POSITIVE = "#e66767"  # above baseline
-DIVERGING_NEUTRAL = "#383835"
+DIVERGING_NEUTRAL = "#2F3E52"
 
 # Muted ink (dark mode) -- raw observations that should recede behind the predictions.
-SERIES_NEUTRAL = "#898781"
+SERIES_NEUTRAL = "#8C96A3"
 
-_DARK_SURFACE = "#1a1a19"
-_DARK_TEXT_PRIMARY = "#ffffff"
-_DARK_TEXT_SECONDARY = "#c3c2b7"
-_DARK_GRIDLINE = "#2c2c2a"
-_DARK_AXIS = "#383835"
+# Chart chrome, matching the app's panels and ink (ui.css: --seat, --chalk, --chalk-dim, --line).
+_DARK_SURFACE = "#182230"
+_DARK_TEXT_PRIMARY = "#F1ECE3"
+_DARK_TEXT_SECONDARY = "#A7B0BC"
+_DARK_GRIDLINE = "#223044"
+_DARK_AXIS = "#2A3747"
+_BODY_FONT = "Barlow, sans-serif"
+_LABEL_FONT = "Barlow Condensed, Barlow, sans-serif"
 
 
 @alt.theme.register("nba_dark", enable=True)
@@ -40,26 +43,35 @@ def _nba_dark_theme() -> alt.theme.ThemeConfig:
         {
             "config": {
                 "background": _DARK_SURFACE,
+                "padding": 14,
+                "font": _BODY_FONT,
                 "view": {"stroke": "transparent"},
-                "title": {"color": _DARK_TEXT_PRIMARY},
+                "title": {"color": _DARK_TEXT_PRIMARY, "font": _LABEL_FONT},
                 "axis": {
                     "labelColor": _DARK_TEXT_SECONDARY,
+                    "labelFont": _BODY_FONT,
+                    "labelFontSize": 12,
                     "titleColor": _DARK_TEXT_PRIMARY,
+                    "titleFont": _LABEL_FONT,
+                    "titleFontSize": 13,
+                    "titleFontWeight": 600,
                     "gridColor": _DARK_GRIDLINE,
                     "domainColor": _DARK_AXIS,
                     "tickColor": _DARK_AXIS,
                 },
-                "legend": {"labelColor": _DARK_TEXT_SECONDARY, "titleColor": _DARK_TEXT_PRIMARY},
+                "legend": {
+                    "labelColor": _DARK_TEXT_SECONDARY,
+                    "labelFont": _BODY_FONT,
+                    "labelFontSize": 13,
+                    "titleColor": _DARK_TEXT_PRIMARY,
+                    "titleFont": _LABEL_FONT,
+                    "titleFontSize": 13,
+                },
                 "header": {"labelColor": _DARK_TEXT_SECONDARY, "titleColor": _DARK_TEXT_PRIMARY},
+                "text": {"font": _BODY_FONT},
             }
         }
     )
-
-
-def prepare_line_chart_data(df: pd.DataFrame, stat_cols: list[str] | None = None) -> pd.DataFrame:
-    """GAME_DATE-indexed df of just the stat columns, ready for st.line_chart."""
-    stat_cols = stat_cols or metrics.DEFAULT_STAT_COLS
-    return df.set_index("GAME_DATE")[list(stat_cols)]
 
 
 def melt_for_overlay(df: pd.DataFrame, player_name: str, stat_cols: list[str] | None = None) -> pd.DataFrame:
@@ -70,26 +82,46 @@ def melt_for_overlay(df: pd.DataFrame, player_name: str, stat_cols: list[str] | 
     return melted
 
 
-def build_overlay_chart(combined_df: pd.DataFrame, player_order: list[str]) -> alt.Chart:
-    """Two-player overlay: color by player (fixed categorical slots 1 & 2),
-    line style by stat, returned unrendered.
+def build_overlay_chart(
+    combined_df: pd.DataFrame, player_order: list[str], height: int = 450, player_legend: bool = True
+) -> alt.Chart:
+    """Game-log lines: color by player (fixed categorical slots 1 & 2), line style by
+    stat, returned unrendered. Drawn with both players for the overlay, or with one
+    player's rows for each side-by-side panel (`player_legend=False` there: the player
+    cards above the charts already carry each player's color key).
 
     `player_order` pins Player 1 to blue and Player 2 to orange; without an explicit
     domain Vega sorts names alphabetically, so colors would swap between charts.
     """
+    color_legend = alt.Legend(title=None, orient="top") if player_legend else None
     return (
         alt.Chart(combined_df)
-        .mark_line(point=True, strokeWidth=2)
+        # No point overlay: Vega-Lite merges it into the stat legend, which then draws its
+        # line samples transparent. 60-80 games per season read fine as lines alone.
+        .mark_line(strokeWidth=2)
         .encode(
-            x="GAME_DATE:T",
-            y="Value:Q",
+            x=alt.X("GAME_DATE:T", title=None),
+            y=alt.Y("Value:Q", title="Per game"),
             color=alt.Color(
-                "Player:N", scale=alt.Scale(domain=player_order, range=[SERIES_BLUE, SERIES_ORANGE])
+                "Player:N",
+                scale=alt.Scale(domain=player_order, range=[SERIES_BLUE, SERIES_ORANGE]),
+                legend=color_legend,
             ),
-            strokeDash="Stat:N",  # different line style for PTS/REB/AST
+            # Different line style per stat, with points solid since it's the headline stat.
+            strokeDash=alt.StrokeDash(
+                "Stat:N",
+                scale=alt.Scale(domain=metrics.DEFAULT_STAT_COLS, range=[[1, 0], [6, 4], [2, 3]]),
+                legend=alt.Legend(
+                    title=None,
+                    orient="top",
+                    symbolType="stroke",
+                    symbolSize=300,
+                    symbolStrokeColor=_DARK_TEXT_SECONDARY,
+                ),
+            ),
             tooltip=["GAME_DATE:T", "Player", "Stat", "Value"],
         )
-        .properties(width=900, height=450)
+        .properties(width=900, height=height)
     )
 
 

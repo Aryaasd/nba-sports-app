@@ -18,14 +18,6 @@ def _sample_game_log():
     )
 
 
-def test_prepare_line_chart_data_index_and_columns():
-    result = charts.prepare_line_chart_data(_sample_game_log())
-    assert result.index.name == "GAME_DATE"
-    assert list(result.columns) == ["PTS", "REB", "AST"]
-    # non-chart columns (MATCHUP, MIN) are dropped
-    assert "MIN" not in result.columns
-
-
 def test_melt_for_overlay_row_count_and_player_column():
     df = _sample_game_log()
     melted = charts.melt_for_overlay(df, "LeBron James")
@@ -47,6 +39,18 @@ def test_build_overlay_chart_returns_alt_chart_with_expected_encoding():
     assert chart.encoding.strokeDash.shorthand == "Stat:N"
     # Player 1 stays blue even though "Kevin Durant" sorts first alphabetically.
     assert chart.to_dict()["encoding"]["color"]["scale"]["domain"] == ["LeBron James", "Kevin Durant"]
+
+
+def test_side_by_side_panel_keeps_player_color_without_legend():
+    panel = charts.build_overlay_chart(
+        charts.melt_for_overlay(_sample_game_log(), "Kevin Durant"),
+        ["LeBron James", "Kevin Durant"],
+        player_legend=False,
+    )
+    color = panel.to_dict()["encoding"]["color"]
+    # Player 2's lone panel still draws in slot 2, and the cards above stand in for the legend.
+    assert color["scale"]["domain"] == ["LeBron James", "Kevin Durant"]
+    assert color["legend"] is None
 
 
 def test_build_null_distribution_chart_returns_layered_chart():

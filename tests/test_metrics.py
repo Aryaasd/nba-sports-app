@@ -195,3 +195,8 @@ def test_build_comparison_table_shape_and_values():
     assert list(table.columns) == ["LeBron James", "Kevin Durant"]
     assert list(table.index) == ["TS%", "PIE"]
     assert table.loc["TS%", "Kevin Durant"] == pytest.approx(0.64)
+
+
+def test_season_averages_are_per_game_means():
+    log = pd.DataFrame({"PTS": [20, 30], "REB": [5, 7], "AST": [8, 9]})
+    assert metrics.season_averages(log) == {"PTS": 25.0, "REB": 6.0, "AST": 8.5}

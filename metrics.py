@@ -146,6 +146,12 @@ def season_per36_totals(game_log_df: pd.DataFrame, stat_cols: list[str] | None =
     return {f"{col}/36": per_36(game_log_df[col].sum(), total_minutes) for col in stat_cols}
 
 
+def season_averages(game_log_df: pd.DataFrame, stat_cols: list[str] | None = None) -> dict[str, float]:
+    """Per-game averages over a season's game log: the season line on a player card."""
+    stat_cols = stat_cols or DEFAULT_STAT_COLS
+    return {col: float(game_log_df[col].mean()) for col in stat_cols}
+
+
 def extract_player_advanced_row(advanced_df: pd.DataFrame, player_id: int) -> pd.Series | None:
     """Row for `player_id` from a whole-league advanced-stats df, joined by ID not name."""
     matches = advanced_df[advanced_df["PLAYER_ID"] == player_id]

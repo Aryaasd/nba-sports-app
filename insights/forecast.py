@@ -56,6 +56,16 @@ ALPHA_HIGH = 0.5
 METHODS = ("naive", "season_mean", "ses")
 CHART_LABELS = {"ses": "SES forecast", "season_mean": "Season-mean baseline"}
 
+# League-wide result of `python -m scripts.evaluate_forecast` (the README's forecast table),
+# quoted on the Home page. Rerun the script and update these when the season changes.
+LEAGUE_RESULT = {
+    "season": "2025-26",
+    "n_players": 367,
+    "min_games": 40,
+    "ses_beats_season_mean_pts": 0.39,
+    "median_alpha_pts": 0.0,
+}
+
 
 def _as_history(history) -> np.ndarray:
     values = np.asarray(history, dtype=float)

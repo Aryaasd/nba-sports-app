@@ -1,10 +1,20 @@
-# Theme values from the validated dark-mode reference palette (dataviz skill,
-# references/palette.md) -- kept in sync with the Altair theme registered in
-# charts.py so the Streamlit chrome and the charts sit on the same surface.
+# "Hardwood under arena lights": the same tokens as ui.css (dark arena surfaces, maple
+# accent, chalk text) and the Altair theme in charts.py, so Streamlit's own widgets,
+# the custom markup, and the charts all sit on one palette.
 [theme]
 base = "dark"
-primaryColor = "#3987e5"
-backgroundColor = "#0d0d0d"
-secondaryBackgroundColor = "#1a1a19"
-textColor = "#ffffff"
-font = "sans serif"
+primaryColor = "#D79A55"
+backgroundColor = "#111A26"
+secondaryBackgroundColor = "#182230"
+textColor = "#F1ECE3"
+linkColor = "#E2AD6C"
+borderColor = "#2A3747"
+dataframeBorderColor = "#2A3747"
+baseRadius = "10px"
+font = "Barlow:https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&display=swap, sans-serif"
+headingFont = "Big Shoulders Display:https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&display=swap, sans-serif"
+headingFontWeights = [900, 800, 800, 700, 700, 700]
+
+[theme.sidebar]
+backgroundColor = "#0C131C"
+secondaryBackgroundColor = "#182230"

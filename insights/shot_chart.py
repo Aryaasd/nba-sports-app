@@ -20,8 +20,8 @@ BIN_SIZE = 40  # ~4 feet per spatial bin
 DEFAULT_MIN_ATTEMPTS = 3
 # Dark, low-contrast so a "not enough data" bin visibly recedes against the
 # app's dark chart surface instead of becoming the brightest thing on screen.
-MUTED_COLOR = "#3a3a38"
-COURT_LINE_COLOR = "#898781"  # muted ink, palette.md
+MUTED_COLOR = "#2F3E52"
+COURT_LINE_COLOR = "#8C96A3"  # muted ink, matching charts.SERIES_NEUTRAL
 
 
 def _arc_points(cx: float, cy: float, r: float, theta1_deg: float, theta2_deg: float, n: int = 50):

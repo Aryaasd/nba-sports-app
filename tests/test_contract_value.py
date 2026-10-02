@@ -107,3 +107,16 @@ def test_describe_underpaid_and_reference_values():
 
 def test_load_contract_values_missing_file_is_none(tmp_path):
     assert cv.load_contract_values(tmp_path / "missing.parquet") is None
+
+
+def test_biggest_bargain_considers_only_judged_contracts():
+    values = pd.DataFrame(
+        {
+            "PLAYER_NAME": ["Vet on a minimum", "Bargain", "Smaller bargain", "Fair"],
+            # RATIO is salary over production-implied salary; lower is a bigger bargain.
+            "RATIO": [0.1, 0.2, 0.4, 1.0],
+            "LABEL": [cv.MINIMUM_DEAL, cv.UNDERPAID, cv.UNDERPAID, cv.FAIR],
+        }
+    )
+    assert cv.biggest_bargain(values)["PLAYER_NAME"] == "Bargain"
+    assert cv.biggest_bargain(values[values["LABEL"] != cv.UNDERPAID]) is None

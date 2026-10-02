@@ -186,6 +186,18 @@ def describe_verdict(result: dict, implied: float) -> str:
     return f"His production implies about {1 / ratio:.1f}x his salary."
 
 
+def biggest_bargain(values: pd.DataFrame) -> pd.Series | None:
+    """The judged contract furthest below its production-implied salary (None if none are).
+
+    Only "Paid below production" verdicts count: a minimum or rookie-scale deal can sit
+    further below its implied salary, but those are valued, never judged.
+    """
+    underpaid = values[values["LABEL"] == UNDERPAID]
+    if underpaid.empty:
+        return None
+    return underpaid.loc[underpaid["RATIO"].idxmin()]
+
+
 def load_contract_values(path: Path = VALUES_PATH) -> pd.DataFrame | None:
     """Precomputed per-player values (scripts/train_contract_model.py), or None if not built."""
     return pd.read_parquet(path) if Path(path).exists() else None

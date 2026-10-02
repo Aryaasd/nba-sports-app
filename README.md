@@ -10,7 +10,7 @@ An interactive Streamlit app for comparing NBA players, testing hypotheses about
 
 **[Try it live](https://nba-sports-app-jneksyc8sa3dsvprpkbxdq.streamlit.app/)**
 
-> **About the hosted demo:** `stats.nba.com` blocks requests from most cloud hosts, including Streamlit Community Cloud. When live data can't be reached, the app offers a one-click switch to a bundled **real** snapshot (LeBron James and Stephen Curry, 2025-26), and a banner says so. Any other selection shows an error rather than made-up data. Run it locally (see below) for live data on every player.
+> **About the hosted demo:** `stats.nba.com` blocks requests from most cloud hosts, including Streamlit Community Cloud. When live data can't be reached, the app falls back to a bundled **real** snapshot (LeBron James and Stephen Curry, 2025-26), and a banner says so. They're also the default players, so on the snapshot's season every page opens on working data. Any other selection shows an error, with a one-click switch back to the snapshot, rather than made-up data. Run it locally (see below) for live data on every player.
 
 ![demo](docs/demo.gif)
 
@@ -204,6 +204,7 @@ The app is split into small, single-purpose modules:
   * `fetch_contracts` — one-time pull of 2025-26 contracts (needs a BALLDONTLIE key).
   * `train_contract_model` — joins contracts to stats, cross-validates, and writes the contract values.
 * **`charts.py`** — Altair chart builders and a dark theme with colorblind-safe categorical and diverging colors.
+* **`ui.py` + `ui.css`** — the visual system: a hardwood hero, player cards with NBA.com headshots and team colors, and styling for Streamlit's own widgets. `ui.py` returns escaped HTML strings, so the markup is unit tested; `.streamlit/config.toml` shares the same palette and fonts.
 * **`sports_app.py`** — thin Streamlit UI glue, with no data-fetching or stat-math logic of its own.
 
 ---

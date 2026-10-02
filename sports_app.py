@@ -1,24 +1,42 @@
 import pandas as pd
 import streamlit as st
+from streamlit.delta_generator import DeltaGenerator
 
 import charts
 import data
 import metrics
 import modeling
 import sample_data_loader
+import ui
 from insights import absence, contract_value, defense_tiers, forecast, hot_hand, shot_chart
 
 st.set_page_config(page_title="NBA Sports App", layout="wide")
+st.html(ui.global_css())
 
-st.title("NBA Sports App")
+PAGES = ["Home", "Compare Players", "Insights", "Predictions"]
+st.sidebar.html(ui.brand())
+page = st.sidebar.radio("Navigate", PAGES, key="nav", label_visibility="collapsed", width="stretch")
+# Each page's own selectors go here, so the credits below stay at the bottom of the sidebar.
+sidebar_controls = st.sidebar.container()
+st.sidebar.divider()
+st.sidebar.html(
+    ui.credits(["Stats: nba_api (NBA.com)", "Salaries: BALLDONTLIE, 2025-26", "Headshots: NBA.com"])
+)
 
-page = st.sidebar.radio("Navigate", ["Home", "Compare Players", "Insights", "Predictions"])
-
+# Player 1 and 2 keep these chart colors on every page element that refers to them.
+PLAYER_COLORS = [charts.SERIES_BLUE, charts.SERIES_ORANGE]
 SAMPLE_LABEL = (
     f"{' / '.join(sample_data_loader.SAMPLE_PLAYERS.values())}, {sample_data_loader.SAMPLE_SEASON}"
 )
 # 10 games of history before the first prediction, plus enough predictions to judge.
 MIN_PREDICTION_GAMES = 15
+# The Home page's hot-hand finding uses this bundled player-season, so it never needs the API.
+FEATURED_PLAYER_ID = 2544
+GO_TO_LABELS = {
+    "Compare Players": "Compare players",
+    "Insights": "Open insights",
+    "Predictions": "See predictions",
+}
 
 
 @st.cache_data(ttl=data.CACHE_TTL_SECONDS, show_spinner="Running the permutation test...")
@@ -39,7 +57,12 @@ def _sidebar_select(label: str, options: list[str], key: str, default: str) -> s
     # non-default index *and* a callback (the sample-data button) writes its key.
     if key not in st.session_state:
         st.session_state[key] = options[metrics.safe_selectbox_index(options, default)]
-    return st.sidebar.selectbox(label, options, key=key)
+    return sidebar_controls.selectbox(label, options, key=key)
+
+
+def _go_to(page_name: str) -> None:
+    # A callback, like _select_sample_data: the nav radio has already rendered this run.
+    st.session_state["nav"] = page_name
 
 
 def _select_sample_data(season_key: str, player_keys: list[str]) -> None:
@@ -54,7 +77,7 @@ def _render_contract_value(compared: dict[int, str]) -> None:
     """Needs no live data (it reads a committed snapshot), so it renders even when the stats
     API is unreachable -- and for any selected season, labeled with the one it covers."""
     season = contract_value.CONTRACT_SEASON
-    st.subheader(f"Contract Value ({season})")
+    st.html(ui.section_header("Contract value", f"{season} salaries"))
     values = contract_value.load_contract_values()
     summary = contract_value.load_model_summary()
     if values is None or summary is None:
@@ -67,8 +90,8 @@ def _render_contract_value(compared: dict[int, str]) -> None:
 
     verdict_col, chart_col = st.columns([2, 3])
     with verdict_col:
-        for player_id, name in compared.items():
-            st.markdown(f"**{name}**")
+        for (player_id, name), color in zip(compared.items(), PLAYER_COLORS):
+            st.html(ui.player_label(name, color))
             match = values[values["PLAYER_ID"] == player_id]
             if match.empty:
                 st.caption(
@@ -109,6 +132,100 @@ def _render_contract_value(compared: dict[int, str]) -> None:
         "defense poorly, so defensive specialists can look overpaid, and contracts price past and "
         f"expected seasons, not just this one. Salaries: {summary['source']}."
     )
+
+
+def _contract_pill(player_id: int) -> str | None:
+    values = contract_value.load_contract_values()
+    match = values[values["PLAYER_ID"] == player_id] if values is not None else []
+    if len(match) == 0:
+        return None
+    row = match.iloc[0]
+    return f"{row.LABEL} · {contract_value.format_millions(row.SALARY)}"
+
+
+def _player_card(
+    player_id: int, name: str, season: str, game_log: pd.DataFrame | None, **card_args
+) -> str:
+    """A player card with his season line, or a note when there's no game log to summarize
+    (`None` means the fetch failed; an empty log means he didn't play)."""
+    if game_log is None:
+        return ui.player_card(player_id, name, note="Live stats unavailable right now.", **card_args)
+    if game_log.empty:
+        return ui.player_card(player_id, name, note=f"No {season} games logged.", **card_args)
+    # The team from his latest game, in case he was traded mid-season.
+    team = defense_tiers.extract_own_team_abbreviation(game_log.iloc[-1]["MATCHUP"])
+    return ui.player_card(
+        player_id,
+        name,
+        team=team,
+        games=len(game_log),
+        averages=metrics.season_averages(game_log),
+        **card_args,
+    )
+
+
+def _render_faceoff(players: list[tuple[int, str]], season: str, game_logs: list | None = None) -> None:
+    game_logs = game_logs or [None] * len(players)
+    # Contract verdicts describe the 2025-26 snapshot; on any other season they'd mislead.
+    show_pill = season == contract_value.CONTRACT_SEASON
+    left, middle, right = st.columns([1, 0.1, 1], vertical_alignment="center")
+    for col, (player_id, name), log, color in zip([left, right], players, game_logs, PLAYER_COLORS):
+        pill = _contract_pill(player_id) if show_pill else None
+        col.html(_player_card(player_id, name, season, log, series_color=color, pill=pill))
+    middle.html(ui.versus())
+
+
+def _render_page_header(eyebrow: str, title: str, blurb: str) -> DeltaGenerator:
+    """Title block on the left; returns the right-hand column for the page's player card."""
+    head_col, card_col = st.columns([1.1, 1], vertical_alignment="center", gap="large")
+    head_col.html(ui.page_header(eyebrow, title, blurb))
+    return card_col
+
+
+def _render_findings() -> None:
+    """Three headline results from the app's own analyses: two computed from committed data,
+    one quoted from scripts/evaluate_forecast.py's league-wide run."""
+    cards = []
+
+    values = contract_value.load_contract_values()
+    bargain = contract_value.biggest_bargain(values) if values is not None else None
+    if bargain is not None:
+        salary = contract_value.format_millions(bargain.SALARY)
+        implied = contract_value.format_millions(bargain.IMPLIED_SALARY)
+        body = (
+            f"{bargain.PLAYER_NAME} scored {bargain.PTS:.1f} a night on {salary}; his production "
+            f"prices at {implied}. The widest gap among the contracts the model judges."
+        )
+        cards.append((ui.finding_card("Contract value", salary, body, versus=implied), "Compare Players"))
+
+    name = sample_data_loader.SAMPLE_PLAYERS[FEATURED_PLAYER_ID]
+    shots = sample_data_loader.load_shot_chart(FEATURED_PLAYER_ID, sample_data_loader.SAMPLE_SEASON)
+    result = _cached_hot_hand_summary(shots) if shots is not None else {"insufficient_data": True}
+    if not result["insufficient_data"]:
+        body = (
+            f"{name} made {result['p_make_after_make']:.1%} of shots after a make and "
+            f"{result['p_make_after_miss']:.1%} after a miss. In {result['n_permutations']:,} "
+            f"shuffles of his own shot order, {result['p_value']:.0%} showed a gap at least that large."
+        )
+        cards.append((ui.finding_card("Hot hand", f"p = {result['p_value']:.2f}", body), "Insights"))
+
+    league = forecast.LEAGUE_RESULT
+    body = (
+        "How often exponential smoothing out-forecast a plain season average, across "
+        f"{league['n_players']} players' {league['season']} scoring. Its median weight on recent "
+        f"games is {league['median_alpha_pts']:.0f}: recent form adds little."
+    )
+    beats = f"{league['ses_beats_season_mean_pts']:.0%}"
+    cards.append((ui.finding_card("Season forecast", beats, body), "Predictions"))
+
+    for col, (card, target) in zip(st.columns(len(cards)), cards):
+        col.html(card)
+        col.button(
+            f"{GO_TO_LABELS[target]} →",
+            key=f"goto_{target.lower().replace(' ', '_')}",
+            on_click=_go_to,
+            args=(target,),
+        )
 
 
 def _show_fetch_error(exc: Exception, season_key: str, player_keys: list[str]) -> None:
@@ -166,87 +283,94 @@ seasons = metrics.get_recent_seasons()
 default_season = metrics.get_default_season()
 
 if page == "Home":
-    st.subheader("Welcome")
-    st.write(
-        "A stats app for comparing NBA players and testing real hypotheses about "
-        "their performance, built on live data from `nba_api`. Pick a section from "
-        "the sidebar to get started."
+    st.html(
+        ui.hero(
+            f"NBA analytics, {sample_data_loader.SAMPLE_SEASON}",
+            ["The box score,", "cross-examined"],
+            "Compare players, test the hot hand, and price a contract. Every model here is scored "
+            "against the simple baseline it has to beat.",
+        )
     )
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.markdown("**Compare Players**")
-        st.write(
-            "Season game logs for any two players, charted side by side or "
-            "overlaid, plus whether each is paid more or less than his "
-            "production implies."
-        )
-    with col2:
-        st.markdown("**Advanced Metrics**")
-        st.write(
-            "TS%, USG%, PACE, and PIE pulled directly from `nba_api`'s advanced "
-            "stats, plus hand-computed PTS/REB/AST per-36 rates for the same two "
-            "players."
-        )
-    with col3:
-        st.markdown("**Insights**")
-        st.write(
-            "Four hypothesis-driven analyses for one player-season: absence and "
-            "rest impact, performance against elite vs. weak defenses, a real "
-            "permutation test for the hot-hand fallacy, and a shot-chart "
-            "efficiency heatmap."
-        )
-    with col4:
-        st.markdown("**Predictions**")
-        st.write(
-            "A next-game points model trained on 20,000+ player-games, and a "
-            "season forecast using exponential smoothing. Both are scored only on "
-            "games they hadn't seen, against simple averages."
-        )
+    st.html(ui.section_header("From the data", f"{sample_data_loader.SAMPLE_SEASON} regular season"))
+    _render_findings()
 
-    st.divider()
-    st.caption(
-        "Every analysis states what it can't show rather than overclaiming: no free "
-        "live injury feed exists, true defensive-scheme data is proprietary, small "
-        "samples are flagged instead of guessed at, and each model is reported next "
-        "to the simple baseline it has to beat."
-    )
+    st.html(ui.section_header("What's inside"))
+    tiles = [
+        (
+            "Compare players",
+            "Two players' game logs side by side or overlaid, advanced rates (TS%, USG%, PACE, PIE) "
+            "with per-36 production, and whether each is paid more or less than his production implies.",
+        ),
+        (
+            "Insights",
+            "Four tests for one player-season: return from absence, elite vs. weak defenses, a "
+            "permutation test of the hot hand, and a shot-chart efficiency heatmap.",
+        ),
+        (
+            "Predictions",
+            "A next-game points model trained on 20,000+ player-games and a season forecast by "
+            "exponential smoothing, both scored only on games they hadn't seen.",
+        ),
+        (
+            "Ground rules",
+            "Each analysis says what it can't show: no free injury feed exists, defensive-scheme "
+            "data is proprietary, small samples are flagged, and every model sits beside its baseline.",
+        ),
+    ]
+    for col, (title, body) in zip(st.columns(len(tiles), gap="medium"), tiles):
+        col.html(ui.tile(title, body))
 
 elif page == "Compare Players":
-    st.subheader("Compare Two Players")
-
     season = _sidebar_select("Season", seasons, "compare_season", default_season)
 
+    # Curry, not a third star, by default: with LeBron he's in the bundled sample, so the
+    # hosted demo opens on a working comparison even when the live API is blocked.
     player1_name = _sidebar_select("Player 1", player_names, "compare_player1", "LeBron James")
-    player2_name = _sidebar_select("Player 2", player_names, "compare_player2", "Kevin Durant")
+    player2_name = _sidebar_select("Player 2", player_names, "compare_player2", "Stephen Curry")
 
     player1_id = metrics.get_player_id(player_index, player1_name)
     player2_id = metrics.get_player_id(player_index, player2_name)
-    compared = {player1_id: player1_name, player2_id: player2_name}
+    players = [(player1_id, player1_name), (player2_id, player2_name)]
+    compared = dict(players)
 
+    st.html(
+        ui.page_header(
+            f"{season} regular season",
+            "Compare players",
+            "Two seasons, game by game, then the rates behind the box score and what each contract buys.",
+        )
+    )
+
+    df1 = df2 = None  # stays None for a player whose game log didn't load
     try:
         df1, sample1 = data.fetch_player_game_log(player1_id, season)
         df2, sample2 = data.fetch_player_game_log(player2_id, season)
         advanced_df, sample_advanced = data.fetch_advanced_stats(season)
     except data.PlayerStatsFetchError as exc:
+        _render_faceoff(players, season, [df1, df2])
         _show_fetch_error(exc, "compare_season", ["compare_player1", "compare_player2"])
         _render_contract_value(compared)
         st.stop()
 
     _show_sample_banner(sample1, sample2, sample_advanced)
+    _render_faceoff(players, season, [df1, df2])
 
     _stop_if_no_games({player1_name: df1, player2_name: df2}, season)
 
-    view = st.radio("Chart View", ["Side by Side", "Overlay"], horizontal=True)
+    st.html(ui.section_header("Game by game", "Points, rebounds, assists"))
+    view = st.radio("Chart view", ["Side by Side", "Overlay"], horizontal=True)
+    player_order = [player1_name, player2_name]
 
     if view == "Side by Side":
-        col1, col2 = st.columns(2)
-        with col1:
-            st.line_chart(charts.prepare_line_chart_data(df1))
-            st.caption(player1_name)
-        with col2:
-            st.line_chart(charts.prepare_line_chart_data(df2))
-            st.caption(player2_name)
+        for col, df, name in zip(st.columns(2), [df1, df2], player_order):
+            col.altair_chart(
+                charts.build_overlay_chart(
+                    charts.melt_for_overlay(df, name), player_order, height=340, player_legend=False
+                ),
+                use_container_width=True,
+                theme=None,
+            )
     else:
         combined_df = pd.concat(
             [
@@ -255,12 +379,12 @@ elif page == "Compare Players":
             ]
         )
         st.altair_chart(
-            charts.build_overlay_chart(combined_df, [player1_name, player2_name]),
+            charts.build_overlay_chart(combined_df, player_order),
             use_container_width=True,
             theme=None,
         )
 
-    st.subheader("Advanced Metrics")
+    st.html(ui.section_header("Advanced metrics", "Season rates"))
     row1 = metrics.extract_player_advanced_row(advanced_df, player1_id)
     row2 = metrics.extract_player_advanced_row(advanced_df, player2_id)
     player_stats = {
@@ -275,7 +399,12 @@ elif page == "Compare Players":
     }
     table_col, note_col = st.columns([2, 1])
     with table_col:
-        st.dataframe(metrics.build_comparison_table(player_stats), use_container_width=True)
+        table = metrics.build_comparison_table(player_stats)
+        rates = pd.IndexSlice[["TS%", "USG%", "PIE"], :]  # shares, read to three places; the rest to one
+        st.dataframe(
+            table.style.format(precision=1, na_rep="N/A").format("{:.3f}", subset=rates, na_rep="N/A"),
+            use_container_width=True,
+        )
     with note_col:
         st.markdown("**Reading this table**")
         st.caption(
@@ -289,24 +418,28 @@ elif page == "Compare Players":
     _render_contract_value(compared)
 
 elif page == "Insights":
-    st.subheader("Insights")
-    st.caption(
-        "Four small, hypothesis-driven analyses for one player-season -- honest "
-        "about what the data can and can't show, not a prediction."
-    )
-
     season = _sidebar_select("Season", seasons, "insights_season", default_season)
     player_name = _sidebar_select("Player", player_names, "insights_player", "LeBron James")
     player_id = metrics.get_player_id(player_index, player_name)
 
+    card_col = _render_page_header(
+        f"{season} regular season",
+        "Insights",
+        "Four small, hypothesis-driven analyses for one player-season, honest about what the "
+        "data can and can't show. None of them is a prediction.",
+    )
+
+    game_log_df = None
     try:
         game_log_df, sample_log = data.fetch_player_game_log(player_id, season)
         all_teams = data.get_all_teams()
         team_advanced_df, sample_team_stats = data.fetch_team_advanced_stats(season)
         shot_df, sample_shots = data.fetch_shot_chart(player_id, season)
     except data.PlayerStatsFetchError as exc:
+        card_col.html(_player_card(player_id, player_name, season, game_log_df))
         _stop_with_fetch_error(exc, "insights_season", ["insights_player"])
 
+    card_col.html(_player_card(player_id, player_name, season, game_log_df))
     _stop_if_no_games({player_name: game_log_df}, season)
 
     # PlayerGameLog has no TEAM_ID column -- derive it from the player's own
@@ -444,7 +577,7 @@ elif page == "Insights":
     with tab_shot_chart:
         st.write(
             "Field-goal percentage by ~4-foot spatial bin. Bins under 3 attempts "
-            "render muted grey instead of a misleading 100%/0% from a single shot."
+            "render muted instead of a misleading 100%/0% from a single shot."
         )
         if shot_df.empty:
             st.info(f"No shot data for {player_name} this season.")
@@ -479,21 +612,24 @@ elif page == "Insights":
                     )
 
 elif page == "Predictions":
-    st.subheader("Predictions")
-    st.caption(
-        "Two forecasting techniques for one player-season. Each is scored only on games it "
-        "hadn't seen yet, next to the simple averages it has to beat."
-    )
-
     season = _sidebar_select("Season", seasons, "predictions_season", default_season)
     player_name = _sidebar_select("Player", player_names, "predictions_player", "LeBron James")
     player_id = metrics.get_player_id(player_index, player_name)
 
+    card_col = _render_page_header(
+        f"{season} regular season",
+        "Predictions",
+        "Two forecasting techniques for one player-season. Each is scored only on games it "
+        "hadn't seen yet, next to the simple averages it has to beat.",
+    )
+
     try:
         game_log_df, sample_log = data.fetch_player_game_log(player_id, season)
     except data.PlayerStatsFetchError as exc:
+        card_col.html(_player_card(player_id, player_name, season, None))
         _stop_with_fetch_error(exc, "predictions_season", ["predictions_player"])
 
+    card_col.html(_player_card(player_id, player_name, season, game_log_df))
     _show_sample_banner(sample_log)
 
     _stop_if_no_games({player_name: game_log_df}, season)
