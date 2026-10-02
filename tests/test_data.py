@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 import pandas as pd
 import pytest
@@ -17,6 +18,7 @@ def _no_sleep(monkeypatch):
 @pytest.fixture(autouse=True)
 def _closed_circuit(monkeypatch):
     monkeypatch.setattr(data, "_api_unreachable_until", 0.0)
+    monkeypatch.setattr(data, "LIVE_API_ENABLED", True)
 
 
 class _FakeGameLog:
@@ -421,3 +423,35 @@ def test_fetch_league_game_logs_wraps_exception(monkeypatch):
     monkeypatch.setattr(data.playergamelogs, "PlayerGameLogs", _RaisesOnInit)
     with pytest.raises(data.PlayerStatsFetchError):
         data.fetch_league_game_logs("2024-25")
+
+
+# --- hosted app: live calls off ------------------------------------------------------------
+
+
+def test_live_api_detection_by_app_path(monkeypatch):
+    monkeypatch.delenv("NBA_API_LIVE", raising=False)
+    assert not data.live_api_enabled(Path("/mount/src/nba-sports-app/data.py"))
+    assert data.live_api_enabled(Path("/Users/someone/nba-sports-app/data.py"))
+
+
+def test_live_api_env_override(monkeypatch):
+    monkeypatch.setenv("NBA_API_LIVE", "1")
+    assert data.live_api_enabled(Path("/mount/src/nba-sports-app/data.py"))
+    monkeypatch.setenv("NBA_API_LIVE", "0")
+    assert not data.live_api_enabled(Path("/Users/someone/nba-sports-app/data.py"))
+
+
+def test_disabled_live_api_never_touches_the_network(monkeypatch):
+    monkeypatch.setattr(data, "LIVE_API_ENABLED", False)
+    calls = []
+    with pytest.raises(data.LiveApiDisabledError):
+        data._call_with_retries(lambda: calls.append(1))
+    assert calls == []
+
+
+def test_disabled_live_api_serves_the_snapshot(monkeypatch, _fresh_cache):
+    monkeypatch.setattr(data, "LIVE_API_ENABLED", False)
+    df, used_sample = data.fetch_player_game_log(2544, "2025-26")
+    assert used_sample and not df.empty
+    with pytest.raises(data.PlayerStatsFetchError):
+        data.fetch_player_game_log(201142, "2025-26")

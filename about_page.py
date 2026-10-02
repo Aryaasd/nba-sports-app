@@ -22,9 +22,10 @@ SOURCES = [
     ),
     (
         "Backup snapshot",
-        "NBA.com blocks most cloud servers, including this app's host. When it can't be reached, "
-        "the app uses a saved copy of real 2025-26 data for LeBron James and Stephen Curry, with a "
-        "banner saying so. Any other selection shows an error, never invented numbers.",
+        "NBA.com blocks most cloud servers, including this app's host, so the hosted version uses a "
+        "saved copy of real 2025-26 data for LeBron James and Stephen Curry, with a banner saying "
+        "so. Run locally, it uses live data. Any selection outside the copy shows an error, never "
+        "invented numbers.",
     ),
     (
         "Contracts",

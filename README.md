@@ -10,7 +10,7 @@ An interactive Streamlit app for comparing NBA players, testing hypotheses about
 
 **[Try it live](https://nba-sports-app-jneksyc8sa3dsvprpkbxdq.streamlit.app/)**
 
-> **About the hosted demo:** `stats.nba.com` blocks requests from most cloud hosts, including Streamlit Community Cloud. When live data can't be reached, the app falls back to a bundled **real** snapshot (LeBron James and Stephen Curry, 2025-26), and a banner says so. They're also the default players, so on the snapshot's season every page opens on working data. Any other selection shows an error, with a one-click switch back to the snapshot, rather than made-up data. Run it locally (see below) for live data on every player.
+> **About the hosted demo:** `stats.nba.com` blocks requests from most cloud hosts, including Streamlit Community Cloud. So the hosted app doesn't wait on it: it detects Streamlit Cloud and goes straight to a bundled **real** snapshot (LeBron James and Stephen Curry, 2025-26), with a banner saying so. They're also the default players, so on the snapshot's season every page opens on working data. Any other selection shows an error, with a one-click switch back to the snapshot, rather than made-up data. Run it locally (see below) for live data on every player; anywhere else, live calls fall back to the snapshot only if the API stops responding. `NBA_API_LIVE=1` or `0` overrides the detection.
 
 ![demo](docs/demo.gif)
 

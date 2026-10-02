@@ -61,9 +61,11 @@
 [data-testid="stElementContainer"]:has(> [data-testid="stMetric"]):only-child { flex: 1 1 auto; }
 [data-testid="stElementContainer"]:only-child > [data-testid="stMetric"] { height: 100%; }
 
-/* Tabs share the full width equally instead of bunching up on the left. */
+/* Tabs share the full width equally instead of bunching up on the left, and on a narrow
+   screen their labels wrap onto two lines rather than pushing the last tab out of view. */
 [data-baseweb="tab-list"] { gap: 0; border-bottom: 1px solid var(--line); }
-button[data-baseweb="tab"] { flex: 1 1 0; min-width: max-content; justify-content: center; padding: 14px 16px; }
+button[data-baseweb="tab"] { flex: 1 1 0; min-width: 0; justify-content: center; padding: 14px 10px; }
+button[data-baseweb="tab"] p { white-space: normal; text-align: center; line-height: 1.25; }
 button[data-baseweb="tab"] p {
   font-family: var(--label); font-weight: 600; text-transform: uppercase;
   letter-spacing: .08em; font-size: 15px; color: var(--chalk-dim);
@@ -72,6 +74,9 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: var(--chalk); }
 button[data-baseweb="tab"]:hover p { color: var(--chalk); }
 [data-baseweb="tab-highlight"] { background: var(--maple); height: 3px; }
 [data-baseweb="tab-border"] { display: none; }
+
+/* Streamlit lets table text break mid-word ("Contrac / t value"); wrap only between words. */
+[data-testid="stTable"] [data-testid="stMarkdownContainer"] p { word-break: normal; overflow-wrap: normal; }
 
 [data-testid="stVegaLiteChart"] { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 
@@ -265,6 +270,10 @@ button[data-baseweb="tab"]:hover p { color: var(--chalk); }
   .pc-name { font-size: 26px; }
   .stat .v { font-size: 28px; }
   .pc-line { gap: 14px; }
+}
+/* Too narrow for a photo beside the stat line: the line wins, the team glow stays. */
+@container (max-width: 300px) {
+  .pc-shot { display: none; }
 }
 
 @media (max-width: 640px) {

@@ -6,8 +6,10 @@ wrapped by a thin `@st.cache_data`-decorated public function.
 """
 from __future__ import annotations
 
+import os
 import random
 import time
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -43,6 +45,20 @@ LEAGUE_REQUEST_TIMEOUT_SECONDS = 90
 
 _api_unreachable_until = 0.0
 
+
+def live_api_enabled(app_path: Path = Path(__file__)) -> bool:
+    """Whether to call stats.nba.com at all. Streamlit Community Cloud serves apps from
+    /mount/src/<repo>, and the API blocks its IPs outright (above), so there every fetch would
+    wait out both timeouts before falling back: about 45s for the first visitor. Live calls are
+    skipped there instead. NBA_API_LIVE=1 or NBA_API_LIVE=0 overrides the detection."""
+    override = os.getenv("NBA_API_LIVE")
+    if override in ("0", "1"):
+        return override == "1"
+    return not app_path.resolve().as_posix().startswith("/mount/src/")
+
+
+LIVE_API_ENABLED = live_api_enabled()
+
 # Sliced down from nba_api's full game-log response to just what the app uses:
 # GAME_DATE/PTS/REB/AST/MIN for stats and charts, MATCHUP for the Insights tab
 # (opponent parsing, and the player's own team abbreviation -- PlayerGameLog has
@@ -71,6 +87,10 @@ class CircuitOpenError(Exception):
     """Raised without touching the network while the circuit breaker is open."""
 
 
+class LiveApiDisabledError(Exception):
+    """Raised without touching the network on a host where live calls are off (LIVE_API_ENABLED)."""
+
+
 def _call_with_retries(fetch_fn):
     """Retry a flaky nba_api call with exponential backoff + jitter.
 
@@ -79,6 +99,8 @@ def _call_with_retries(fetch_fn):
     for everyone else.
     """
     global _api_unreachable_until
+    if not LIVE_API_ENABLED:
+        raise LiveApiDisabledError("live NBA stats calls are off on this host, which stats.nba.com blocks")
     if time.monotonic() < _api_unreachable_until:
         raise CircuitOpenError(
             "stats.nba.com stopped responding moments ago; skipping live calls for a few minutes"

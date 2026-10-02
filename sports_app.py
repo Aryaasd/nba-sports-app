@@ -254,11 +254,17 @@ def _render_findings() -> None:
 
 
 def _show_fetch_error(exc: Exception, season_key: str, player_keys: list[str]) -> None:
-    st.error(
-        "Couldn't load live NBA data for this selection -- the NBA stats API didn't respond. "
-        "It blocks many cloud servers (including the one this demo is hosted on) and briefly "
-        "throttles bursts of requests, so a local run may just need a few minutes."
-    )
+    if data.LIVE_API_ENABLED:
+        st.error(
+            "Couldn't load live NBA data for this selection -- the NBA stats API didn't respond. "
+            "It blocks many cloud servers and briefly throttles bursts of requests, so a local "
+            "run may just need a few minutes."
+        )
+    else:
+        st.error(
+            "This selection isn't in the cached snapshot. The hosted demo can't use live NBA data: "
+            "the NBA stats API blocks its servers. Run the app locally for every player and season."
+        )
     st.button(
         f"Explore with cached sample data ({SAMPLE_LABEL})",
         on_click=_select_sample_data,
@@ -288,11 +294,15 @@ def _show_sample_banner(*used_sample_flags: bool) -> None:
     # game log loaded live -- the snapshot's league tables cover every player.
     if any(used_sample_flags):
         players = " and ".join(sample_data_loader.SAMPLE_PLAYERS.values())
+        why = (
+            "the live NBA stats API is unreachable from this host right now"
+            if data.LIVE_API_ENABLED
+            else "the NBA stats API blocks this hosted demo's servers"
+        )
         st.warning(
             f"Some of this page comes from a cached {sample_data_loader.SAMPLE_SEASON} snapshot of "
-            "real data -- the live NBA stats API is unreachable from this host right now. The "
-            f"snapshot covers {players} plus league-wide tables; any other player shows an error "
-            "rather than made-up data."
+            f"real data -- {why}. The snapshot covers {players} plus league-wide tables; any other "
+            "player shows an error rather than made-up data."
         )
 
 
