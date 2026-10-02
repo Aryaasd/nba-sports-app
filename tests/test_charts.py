@@ -1,6 +1,7 @@
 import altair as alt
 import numpy as np
 import pandas as pd
+import pytest
 
 import charts
 
@@ -28,29 +29,57 @@ def test_melt_for_overlay_row_count_and_player_column():
     assert "MATCHUP" not in melted.columns
 
 
-def test_build_overlay_chart_returns_alt_chart_with_expected_encoding():
-    df1 = charts.melt_for_overlay(_sample_game_log(), "LeBron James")
-    df2 = charts.melt_for_overlay(_sample_game_log(), "Kevin Durant")
-    combined = pd.concat([df1, df2])
-    chart = charts.build_overlay_chart(combined, ["LeBron James", "Kevin Durant"])
-    assert isinstance(chart, alt.Chart)
-    assert chart.encoding.x.shorthand == "GAME_DATE:T"
-    assert chart.encoding.color.shorthand == "Player:N"
-    assert chart.encoding.strokeDash.shorthand == "Stat:N"
+def _two_players():
+    return pd.concat(
+        [
+            charts.melt_for_overlay(_sample_game_log(), "LeBron James"),
+            charts.melt_for_overlay(_sample_game_log(), "Kevin Durant"),
+        ]
+    )
+
+
+def test_one_stat_game_log_colors_by_player_with_hoverable_dots():
+    chart = charts.build_game_log_chart(_two_players(), ["LeBron James", "Kevin Durant"], ["PTS"])
+    assert isinstance(chart, alt.LayerChart)
+    lines, dots = (layer.to_dict() for layer in chart.layer)
+    assert lines["mark"]["type"] == "line" and dots["mark"]["type"] == "circle"
     # Player 1 stays blue even though "Kevin Durant" sorts first alphabetically.
-    assert chart.to_dict()["encoding"]["color"]["scale"]["domain"] == ["LeBron James", "Kevin Durant"]
+    assert lines["encoding"]["color"]["field"] == "Player"
+    assert lines["encoding"]["color"]["scale"]["domain"] == ["LeBron James", "Kevin Durant"]
+    assert lines["encoding"]["y"]["title"] == "Points"
+    assert "tooltip" in dots["encoding"]
 
 
-def test_side_by_side_panel_keeps_player_color_without_legend():
-    panel = charts.build_overlay_chart(
+def test_all_three_stats_color_by_stat_never_by_player_color():
+    one_player = charts.melt_for_overlay(_sample_game_log(), "LeBron James")
+    chart = charts.build_game_log_chart(one_player, ["LeBron James", "Kevin Durant"], ["PTS", "REB", "AST"])
+    lines = chart.layer[0].to_dict()
+    assert lines["encoding"]["color"]["field"] == "Stat"
+    assert lines["encoding"]["color"]["scale"]["range"] == list(charts.STAT_COLORS.values())
+    assert not set(charts.STAT_COLORS.values()) & {charts.SERIES_BLUE, charts.SERIES_ORANGE}
+
+
+def test_two_players_compare_one_stat_at_a_time():
+    with pytest.raises(ValueError, match="one stat at a time"):
+        charts.build_game_log_chart(_two_players(), ["LeBron James", "Kevin Durant"], ["PTS", "REB"])
+
+
+def test_side_by_side_panel_shares_y_axis_and_has_no_player_legend():
+    panel = charts.build_game_log_chart(
         charts.melt_for_overlay(_sample_game_log(), "Kevin Durant"),
         ["LeBron James", "Kevin Durant"],
+        ["REB"],
+        y_max=50,
+        date_range=(pd.Timestamp("2023-10-01"), pd.Timestamp("2024-04-30")),
         player_legend=False,
     )
-    color = panel.to_dict()["encoding"]["color"]
-    # Player 2's lone panel still draws in slot 2, and the cards above stand in for the legend.
-    assert color["scale"]["domain"] == ["LeBron James", "Kevin Durant"]
-    assert color["legend"] is None
+    lines = panel.layer[0].to_dict()
+    assert lines["encoding"]["y"]["scale"]["domain"] == [0, 50]
+    assert lines["encoding"]["x"]["scale"]["domain"] == [
+        {"year": 2023, "month": 10, "date": 1},
+        {"year": 2024, "month": 4, "date": 30},
+    ]
+    assert lines["encoding"]["color"]["legend"] is None
 
 
 def test_build_null_distribution_chart_returns_layered_chart():

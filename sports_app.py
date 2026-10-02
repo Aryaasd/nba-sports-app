@@ -2,6 +2,7 @@ import pandas as pd
 import streamlit as st
 from streamlit.delta_generator import DeltaGenerator
 
+import about_page
 import charts
 import data
 import metrics
@@ -13,7 +14,7 @@ from insights import absence, contract_value, defense_tiers, forecast, hot_hand,
 st.set_page_config(page_title="NBA Sports App", layout="wide")
 st.html(ui.global_css())
 
-PAGES = ["Home", "Compare Players", "Insights", "Predictions"]
+PAGES = ["Home", "Compare Players", "Insights", "Predictions", "About"]
 st.sidebar.html(ui.brand())
 page = st.sidebar.radio("Navigate", PAGES, key="nav", label_visibility="collapsed", width="stretch")
 # Each page's own selectors go here, so the credits below stay at the bottom of the sidebar.
@@ -23,8 +24,9 @@ st.sidebar.html(
     ui.credits(["Stats: nba_api (NBA.com)", "Salaries: BALLDONTLIE, 2025-26", "Headshots: NBA.com"])
 )
 
-# Player 1 and 2 keep these chart colors on every page element that refers to them.
-PLAYER_COLORS = [charts.SERIES_BLUE, charts.SERIES_ORANGE]
+# Compared players are drawn in their team colors (ui.player_line_colors); these slot colors
+# stand in when a team is unknown or two teams' colors are too close to tell apart.
+DEFAULT_PLAYER_COLORS = [charts.SERIES_BLUE, charts.SERIES_ORANGE]
 SAMPLE_LABEL = (
     f"{' / '.join(sample_data_loader.SAMPLE_PLAYERS.values())}, {sample_data_loader.SAMPLE_SEASON}"
 )
@@ -32,10 +34,13 @@ SAMPLE_LABEL = (
 MIN_PREDICTION_GAMES = 15
 # The Home page's hot-hand finding uses this bundled player-season, so it never needs the API.
 FEATURED_PLAYER_ID = 2544
+ALL_STATS = "All three"
+STAT_CHOICE_KEYS = {"Side by side": "compare_stat_side", "Overlay": "compare_stat_overlay"}
 GO_TO_LABELS = {
     "Compare Players": "Compare players",
     "Insights": "Open insights",
     "Predictions": "See predictions",
+    "About": "How it all works",
 }
 
 
@@ -60,6 +65,17 @@ def _sidebar_select(label: str, options: list[str], key: str, default: str) -> s
     return sidebar_controls.selectbox(label, options, key=key)
 
 
+def _sync_stat_choice() -> None:
+    """Carry the Compare stat across a view switch. Overlay has no "All three", so switching
+    to it from there starts Overlay on Points."""
+    side, overlay = (st.session_state.get(key) for key in STAT_CHOICE_KEYS.values())
+    if st.session_state["compare_view"] == "Overlay":
+        if side and side != ALL_STATS:
+            st.session_state[STAT_CHOICE_KEYS["Overlay"]] = side
+    elif overlay:
+        st.session_state[STAT_CHOICE_KEYS["Side by side"]] = overlay
+
+
 def _go_to(page_name: str) -> None:
     # A callback, like _select_sample_data: the nav radio has already rendered this run.
     st.session_state["nav"] = page_name
@@ -73,7 +89,7 @@ def _select_sample_data(season_key: str, player_keys: list[str]) -> None:
         st.session_state[key] = name
 
 
-def _render_contract_value(compared: dict[int, str]) -> None:
+def _render_contract_value(compared: dict[int, str], colors: list[str]) -> None:
     """Needs no live data (it reads a committed snapshot), so it renders even when the stats
     API is unreachable -- and for any selected season, labeled with the one it covers."""
     season = contract_value.CONTRACT_SEASON
@@ -90,7 +106,7 @@ def _render_contract_value(compared: dict[int, str]) -> None:
 
     verdict_col, chart_col = st.columns([2, 3])
     with verdict_col:
-        for (player_id, name), color in zip(compared.items(), PLAYER_COLORS):
+        for (player_id, name), color in zip(compared.items(), colors):
             st.html(ui.player_label(name, color))
             match = values[values["PLAYER_ID"] == player_id]
             if match.empty:
@@ -115,7 +131,7 @@ def _render_contract_value(compared: dict[int, str]) -> None:
             st.write(f"**{row.LABEL}.** {escaped}")
     with chart_col:
         st.altair_chart(
-            charts.build_contract_value_chart(plotted, compared, typical_ratio),
+            charts.build_contract_value_chart(plotted, compared, typical_ratio, colors),
             use_container_width=True,
             theme=None,
         )
@@ -143,6 +159,18 @@ def _contract_pill(player_id: int) -> str | None:
     return f"{row.LABEL} · {contract_value.format_millions(row.SALARY)}"
 
 
+def _team_of(game_log: pd.DataFrame | None) -> str | None:
+    """The team from a player's latest game (in case he was traded mid-season), if any."""
+    if game_log is None or game_log.empty:
+        return None
+    return defense_tiers.extract_own_team_abbreviation(game_log.iloc[-1]["MATCHUP"])
+
+
+def _player_colors(game_logs: list[pd.DataFrame | None]) -> list[str]:
+    """Each compared player's color on the cards and in every chart: his team's."""
+    return ui.player_line_colors([_team_of(log) for log in game_logs], DEFAULT_PLAYER_COLORS)
+
+
 def _player_card(
     player_id: int, name: str, season: str, game_log: pd.DataFrame | None, **card_args
 ) -> str:
@@ -152,24 +180,21 @@ def _player_card(
         return ui.player_card(player_id, name, note="Live stats unavailable right now.", **card_args)
     if game_log.empty:
         return ui.player_card(player_id, name, note=f"No {season} games logged.", **card_args)
-    # The team from his latest game, in case he was traded mid-season.
-    team = defense_tiers.extract_own_team_abbreviation(game_log.iloc[-1]["MATCHUP"])
     return ui.player_card(
         player_id,
         name,
-        team=team,
+        team=_team_of(game_log),
         games=len(game_log),
         averages=metrics.season_averages(game_log),
         **card_args,
     )
 
 
-def _render_faceoff(players: list[tuple[int, str]], season: str, game_logs: list | None = None) -> None:
-    game_logs = game_logs or [None] * len(players)
+def _render_faceoff(players: list[tuple[int, str]], season: str, game_logs: list, colors: list[str]) -> None:
     # Contract verdicts describe the 2025-26 snapshot; on any other season they'd mislead.
     show_pill = season == contract_value.CONTRACT_SEASON
     left, middle, right = st.columns([1, 0.1, 1], vertical_alignment="center")
-    for col, (player_id, name), log, color in zip([left, right], players, game_logs, PLAYER_COLORS):
+    for col, (player_id, name), log, color in zip([left, right], players, game_logs, colors):
         pill = _contract_pill(player_id) if show_pill else None
         col.html(_player_card(player_id, name, season, log, series_color=color, pill=pill))
     middle.html(ui.versus())
@@ -320,6 +345,7 @@ if page == "Home":
     ]
     for col, (title, body) in zip(st.columns(len(tiles), gap="medium"), tiles):
         col.html(ui.tile(title, body))
+    st.button(f"{GO_TO_LABELS['About']} →", key="goto_about", on_click=_go_to, args=("About",))
 
 elif page == "Compare Players":
     season = _sidebar_select("Season", seasons, "compare_season", default_season)
@@ -348,25 +374,48 @@ elif page == "Compare Players":
         df2, sample2 = data.fetch_player_game_log(player2_id, season)
         advanced_df, sample_advanced = data.fetch_advanced_stats(season)
     except data.PlayerStatsFetchError as exc:
-        _render_faceoff(players, season, [df1, df2])
+        colors = _player_colors([df1, df2])
+        _render_faceoff(players, season, [df1, df2], colors)
         _show_fetch_error(exc, "compare_season", ["compare_player1", "compare_player2"])
-        _render_contract_value(compared)
+        _render_contract_value(compared, colors)
         st.stop()
 
     _show_sample_banner(sample1, sample2, sample_advanced)
-    _render_faceoff(players, season, [df1, df2])
+    colors = _player_colors([df1, df2])
+    _render_faceoff(players, season, [df1, df2], colors)
 
     _stop_if_no_games({player1_name: df1, player2_name: df2}, season)
 
-    st.html(ui.section_header("Game by game", "Points, rebounds, assists"))
-    view = st.radio("Chart view", ["Side by Side", "Overlay"], horizontal=True)
+    st.html(ui.section_header("Game by game", "Every game, in order"))
+    view_col, stat_col = st.columns([2, 3])
+    view = view_col.radio(
+        "Chart view",
+        ["Side by side", "Overlay"],
+        horizontal=True,
+        key="compare_view",
+        on_change=_sync_stat_choice,
+    )
+    # Overlay puts both players on one chart, so it compares one stat at a time; each view keeps
+    # its own stat choice (synced on switching) since only side by side offers all three.
+    choices = list(charts.STAT_NAMES.values()) + ([ALL_STATS] if view == "Side by side" else [])
+    stat_choice = stat_col.radio("Stat", choices, horizontal=True, key=STAT_CHOICE_KEYS[view])
+    stats = [code for code, name in charts.STAT_NAMES.items() if stat_choice in (name, ALL_STATS)]
     player_order = [player1_name, player2_name]
 
-    if view == "Side by Side":
+    if view == "Side by side":
+        # Shared axes, so the same height means the same number and the same spot the same date.
+        y_max = max(df[stats].to_numpy().max() for df in [df1, df2]) * 1.05
+        dates = pd.concat([df1["GAME_DATE"], df2["GAME_DATE"]])
         for col, df, name in zip(st.columns(2), [df1, df2], player_order):
             col.altair_chart(
-                charts.build_overlay_chart(
-                    charts.melt_for_overlay(df, name), player_order, height=340, player_legend=False
+                charts.build_game_log_chart(
+                    charts.melt_for_overlay(df, name),
+                    player_order,
+                    stats,
+                    colors=colors,
+                    y_max=y_max,
+                    date_range=(dates.min(), dates.max()),
+                    player_legend=False,
                 ),
                 use_container_width=True,
                 theme=None,
@@ -379,10 +428,12 @@ elif page == "Compare Players":
             ]
         )
         st.altair_chart(
-            charts.build_overlay_chart(combined_df, player_order),
+            charts.build_game_log_chart(combined_df, player_order, stats, colors=colors, height=420),
             use_container_width=True,
             theme=None,
         )
+    if len(stats) > 1:
+        st.caption("Click a stat in the legend to show it alone; click empty space in the chart to reset.")
 
     st.html(ui.section_header("Advanced metrics", "Season rates"))
     row1 = metrics.extract_player_advanced_row(advanced_df, player1_id)
@@ -406,7 +457,7 @@ elif page == "Compare Players":
             use_container_width=True,
         )
     with note_col:
-        st.markdown("**Reading this table**")
+        st.html(ui.subhead("Reading this table"))
         st.caption(
             "TS% and USG% come straight from `nba_api`'s Advanced measure type. "
             "PACE is the team's estimated possessions per 48 minutes while the "
@@ -415,7 +466,7 @@ elif page == "Compare Players":
             "a separate API call."
         )
 
-    _render_contract_value(compared)
+    _render_contract_value(compared, colors)
 
 elif page == "Insights":
     season = _sidebar_select("Season", seasons, "insights_season", default_season)
@@ -488,9 +539,17 @@ elif page == "Insights":
                     charts.build_delta_bar_chart(result["stats"]), use_container_width=True, theme=None
                 )
             with table_col:
-                st.markdown("**Return-game vs. season baseline**")
-                deltas_df = pd.DataFrame(result["stats"]).T
-                st.dataframe(deltas_df.style.format("{:.2f}"), use_container_width=True)
+                st.html(ui.subhead("Return-game vs. season baseline"))
+                labels = {
+                    "return_avg": "Return games",
+                    "baseline_avg": "Season average",
+                    "delta": "Difference",
+                }
+                deltas_df = pd.DataFrame(result["stats"]).T.rename(columns=labels)
+                st.dataframe(
+                    deltas_df.style.format("{:.2f}").format("{:+.2f}", subset=["Difference"]),
+                    use_container_width=True,
+                )
                 st.caption(
                     "Assumes the player stayed on one team all season -- a mid-season "
                     "trade will misregister old-team games as \"missed.\""
@@ -515,7 +574,7 @@ elif page == "Insights":
                     charts.build_defense_tier_chart(tier_result), use_container_width=True, theme=None
                 )
             with table_col:
-                st.markdown("**Per-game averages by opponent tier**")
+                st.html(ui.subhead("Per-game averages by opponent tier"))
                 st.dataframe(
                     tier_result.style.format({"PTS": "{:.1f}", "REB": "{:.1f}", "AST": "{:.1f}"}),
                     use_container_width=True,
@@ -558,7 +617,7 @@ elif page == "Insights":
                     theme=None,
                 )
             with note_col:
-                st.markdown("**Reading this test**")
+                st.html(ui.subhead("Reading this test"))
                 st.write(
                     f"If there were truly no streakiness, a gap this large would show "
                     f"up in shuffled data about **{hot_hand_result['p_value']:.1%}** of "
@@ -586,7 +645,7 @@ elif page == "Insights":
             with chart_col:
                 st.altair_chart(shot_chart.build_shot_chart(shot_df), use_container_width=False, theme=None)
             with table_col:
-                st.markdown("**Best zones this season**")
+                st.html(ui.subhead("Best zones this season"))
                 binned = shot_chart.bin_shots(shot_df)
                 qualified = binned[binned["attempts"] >= shot_chart.DEFAULT_MIN_ATTEMPTS].copy()
                 if qualified.empty:
@@ -684,7 +743,7 @@ elif page == "Predictions":
                 series = ["Actual", "Model", "Baseline (10-game avg)"]
                 chart_col, side_col = st.columns([3, 2])
                 with chart_col:
-                    st.markdown(f"**{player_name}, {season}: each prediction, made before the game**")
+                    st.html(ui.subhead(f"{player_name}, {season}: each prediction, made before the game"))
                     long_df = backtest.melt(
                         id_vars="GAME_DATE", value_vars=series, var_name="Series", value_name="Value"
                     )
@@ -694,7 +753,7 @@ elif page == "Predictions":
                         theme=None,
                     )
                 with side_col:
-                    st.markdown(f"**{player_name}'s typical miss this season**")
+                    st.html(ui.subhead(f"{player_name}'s typical miss this season"))
                     player_errors = pd.DataFrame(
                         {
                             "Method": ["Model", "10-game average", "5-game average"],
@@ -711,7 +770,7 @@ elif page == "Predictions":
                     )
 
                     last_game = game_log_df["GAME_DATE"].max()
-                    st.markdown(f"**Next game after {last_game:%b %d, %Y}**")
+                    st.html(ui.subhead(f"Next game after {last_game:%b %d, %Y}"))
                     rest_col, home_col = st.columns(2)
                     days_rest = rest_col.number_input(
                         "Days of rest", 0, modeling.MAX_DAYS_REST, 1, key="predictions_rest"
@@ -772,7 +831,7 @@ elif page == "Predictions":
                     theme=None,
                 )
             with note_col:
-                st.markdown("**What the fitted weight says**")
+                st.html(ui.subhead("What the fitted weight says"))
                 st.write(
                     f"Smoothing weight **α = {result['alpha']:.2f}**. "
                     f"{forecast.describe_alpha(result['alpha'])}"
@@ -788,3 +847,6 @@ elif page == "Predictions":
                     f"Scored on {result['n_games'] - forecast.MIN_TRAIN_SIZE} walk-forward forecasts; "
                     f"the first {forecast.MIN_TRAIN_SIZE} games are training-only."
                 )
+
+elif page == "About":
+    about_page.render()

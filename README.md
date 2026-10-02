@@ -205,6 +205,7 @@ The app is split into small, single-purpose modules:
   * `train_contract_model` — joins contracts to stats, cross-validates, and writes the contract values.
 * **`charts.py`** — Altair chart builders and a dark theme with colorblind-safe categorical and diverging colors.
 * **`ui.py` + `ui.css`** — the visual system: a hardwood hero, player cards with NBA.com headshots and team colors, and styling for Streamlit's own widgets. `ui.py` returns escaped HTML strings, so the markup is unit tested; `.streamlit/config.toml` shares the same palette and fonts.
+* **`about_page.py`** — the in-app About page: data sources, how each page works, the ground rules, and a results table read from the committed model files.
 * **`sports_app.py`** — thin Streamlit UI glue, with no data-fetching or stat-math logic of its own.
 
 ---

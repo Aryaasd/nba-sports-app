@@ -64,10 +64,58 @@ def test_markup_escapes_text():
 
 def test_finding_card_versus_figure():
     card = ui.finding_card("Contract value", "$5.1M", "body", versus="$26.4M")
-    assert "$5.1M<small>vs</small>$26.4M" in card
+    # Separate spans, so a narrow card wraps "vs $26.4M" to its own line instead of overflowing.
+    assert "<span>$5.1M</span><span><small>vs</small>$26.4M</span>" in card
 
 
 def test_global_css_wraps_stylesheet():
     css = ui.global_css()
     assert css.startswith("<style>") and css.endswith("</style>")
     assert "--maple" in css
+
+
+def test_lifted_team_color_stands_out_and_keeps_its_hue():
+    import colorsys
+
+    lifted = ui.team_line_color("LAL")
+    assert ui.contrast_ratio(lifted, ui.CHART_SURFACE) >= ui._MIN_LINE_CONTRAST
+    hue = lambda c: colorsys.rgb_to_hls(*ui._rgb(c))[0]  # noqa: E731
+    assert abs(hue(lifted) - hue("#552583")) < 0.01  # still Lakers purple, just lighter
+    # A color that already stands out comes back unchanged.
+    assert ui.lift_to_contrast("#C4CED4") == "#C4CED4"
+
+
+def test_team_line_color_skips_an_invisible_black_primary():
+    assert ui.team_line_color("BKN") == "#FFFFFF"
+    assert ui.team_line_color(None) is None
+
+
+def test_player_line_colors_use_each_team():
+    fallback = ["#3987e5", "#d95926"]
+    colors = ui.player_line_colors(["LAL", "BOS"], fallback)
+    assert colors == [ui.team_line_color("LAL"), ui.team_line_color("BOS")]
+    assert ui.color_distance(*colors) >= ui._MIN_COLOR_DISTANCE
+
+
+def test_close_team_colors_move_player_2_to_his_second_color():
+    # Lakers purple and Warriors blue are too close on a chart; Warriors gold isn't.
+    fallback = ["#3987e5", "#d95926"]
+    assert ui.player_line_colors(["LAL", "GSW"], fallback) == [
+        ui.team_line_color("LAL"),
+        ui.team_line_color("GSW", second=True),
+    ]
+
+
+def test_teammates_split_into_primary_and_secondary():
+    fallback = ["#3987e5", "#d95926"]
+    assert ui.player_line_colors(["LAL", "LAL"], fallback) == [
+        ui.team_line_color("LAL"),
+        ui.team_line_color("LAL", second=True),
+    ]
+
+
+def test_unknown_or_inseparable_teams_fall_back_to_slot_colors():
+    fallback = ["#3987e5", "#d95926"]
+    assert ui.player_line_colors([None, None], fallback) == fallback
+    # Two Nets: black is invisible, so both would be white, even with the second color.
+    assert ui.player_line_colors(["BKN", "BKN"], fallback) == fallback

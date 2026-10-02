@@ -7,6 +7,7 @@ an attribute.
 """
 from __future__ import annotations
 
+import colorsys
 from html import escape
 from pathlib import Path
 
@@ -54,6 +55,14 @@ NEUTRAL_COLORS = ("#2A3747", "#A7B0BC")
 # Below this relative luminance a team color is too dark to glow on the card's surface.
 _MIN_GLOW_LUMINANCE = 0.03
 
+# Chart lines in team colors: each is lightened (hue kept) until it has this contrast with the
+# chart surface (ui.css --seat), the WCAG minimum for graphics. Two players whose colors end
+# up closer than _MIN_COLOR_DISTANCE (CIE76 delta E) can't be told apart, so Player 2 moves
+# to his team's second color.
+CHART_SURFACE = "#182230"
+_MIN_LINE_CONTRAST = 3.0
+_MIN_COLOR_DISTANCE = 40.0
+
 def global_css() -> str:
     return f"<style>{CSS_PATH.read_text()}</style>"
 
@@ -73,6 +82,72 @@ def relative_luminance(hex_color: str) -> float:
     return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
 
 
+def contrast_ratio(a: str, b: str) -> float:
+    """WCAG contrast ratio between two "#RRGGBB" colors, 1 to 21."""
+    light, dark = sorted([relative_luminance(a), relative_luminance(b)], reverse=True)
+    return (light + 0.05) / (dark + 0.05)
+
+
+def _rgb(hex_color: str) -> tuple[float, float, float]:
+    return tuple(int(hex_color.lstrip("#")[i : i + 2], 16) / 255 for i in (0, 2, 4))
+
+
+def _hex(rgb) -> str:
+    return "#" + "".join(f"{round(c * 255):02X}" for c in rgb)
+
+
+def lift_to_contrast(hex_color: str, surface: str = CHART_SURFACE) -> str:
+    """The color, lightened in small steps with its hue and saturation kept, until it stands
+    out on `surface`. Colors that already do come back unchanged."""
+    hue, lightness, saturation = colorsys.rgb_to_hls(*_rgb(hex_color))
+    color = hex_color.upper()
+    while contrast_ratio(color, surface) < _MIN_LINE_CONTRAST and lightness < 0.95:
+        lightness = min(lightness + 0.02, 0.95)
+        color = _hex(colorsys.hls_to_rgb(hue, lightness, saturation))
+    return color
+
+
+def color_distance(a: str, b: str) -> float:
+    """CIE76 delta E between two colors: about 2.3 is just noticeable, 30+ is clearly different."""
+
+    def lab(hex_color):
+        linear = [c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4 for c in _rgb(hex_color)]
+        r, g, b = linear
+        xyz = (
+            (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047,
+            0.2126 * r + 0.7152 * g + 0.0722 * b,
+            (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883,
+        )
+        f = [t ** (1 / 3) if t > 0.008856 else 7.787 * t + 16 / 116 for t in xyz]
+        return 116 * f[1] - 16, 500 * (f[0] - f[1]), 200 * (f[1] - f[2])
+
+    return sum((x - y) ** 2 for x, y in zip(lab(a), lab(b))) ** 0.5
+
+
+def team_line_color(abbreviation: str | None, second: bool = False) -> str | None:
+    """A team's color for chart lines, or None for an unknown team. A gray primary too dark to
+    show (Brooklyn's black) gives way to the secondary."""
+    if abbreviation not in TEAM_COLORS:
+        return None
+    primary, secondary = TEAM_COLORS[abbreviation]
+    _, _, saturation = colorsys.rgb_to_hls(*_rgb(primary))
+    dark_gray = saturation < 0.15 and contrast_ratio(primary, CHART_SURFACE) < _MIN_LINE_CONTRAST
+    return lift_to_contrast(secondary if second or dark_gray else primary)
+
+
+def player_line_colors(teams: list[str | None], fallback: list[str]) -> list[str]:
+    """One chart color per compared player, from his team (by slot order). Teammates, or two
+    teams with near-identical colors, would be indistinguishable, so Player 2 switches to his
+    team's second color; if that's still too close, both players use `fallback`."""
+    colors = [team_line_color(team) or default for team, default in zip(teams, fallback)]
+    if len(colors) < 2 or color_distance(colors[0], colors[1]) >= _MIN_COLOR_DISTANCE:
+        return colors
+    second = team_line_color(teams[1], second=True) or fallback[1]
+    if color_distance(colors[0], second) >= _MIN_COLOR_DISTANCE:
+        return [colors[0], second]
+    return list(fallback[: len(colors)])
+
+
 def glow_color(primary: str, secondary: str) -> str:
     """The team color lit behind a headshot: the primary, unless it's too dark to see."""
     return primary if relative_luminance(primary) >= _MIN_GLOW_LUMINANCE else secondary
@@ -80,7 +155,7 @@ def glow_color(primary: str, secondary: str) -> str:
 
 def _key(series_color: str) -> str:
     """A dot in the color a player takes in the page's charts."""
-    return f'<span class="key" style="background:{escape(series_color)}"></span>'
+    return f'<span class="series-dot" style="background:{escape(series_color)}"></span>'
 
 
 def brand() -> str:
@@ -116,13 +191,18 @@ def section_header(title: str, note: str | None = None) -> str:
 
 def finding_card(kicker: str, figure: str, body: str, versus: str | None = None) -> str:
     """A headline number from the app's own results. `versus` adds a second figure ("A vs B")."""
-    shown = escape(figure)
+    shown = f"<span>{escape(figure)}</span>"
     if versus is not None:
-        shown += f"<small>vs</small>{escape(versus)}"
+        shown += f"<span><small>vs</small>{escape(versus)}</span>"
     return (
         f'<div class="finding"><div class="eyebrow">{escape(kicker)}</div>'
         f'<div class="figure">{shown}</div><p>{escape(body)}</p></div>'
     )
+
+
+def subhead(text: str) -> str:
+    """A label over a table, chart, or note inside a section."""
+    return f'<div class="subhead">{escape(text)}</div>'
 
 
 def tile(title: str, body: str) -> str:

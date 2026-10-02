@@ -24,6 +24,12 @@ DIVERGING_NEGATIVE = "#3987e5"  # below baseline
 DIVERGING_POSITIVE = "#e66767"  # above baseline
 DIVERGING_NEUTRAL = "#2F3E52"
 
+# Game-log stats. Their colors are used only when all three share a chart, where color means
+# stat rather than player, so none of them is the player blue or orange. They differ in
+# lightness as well as hue (chalk, green, lilac), so they stay apart under color blindness.
+STAT_NAMES = {"PTS": "Points", "REB": "Rebounds", "AST": "Assists"}
+STAT_COLORS = {"PTS": "#F1ECE3", "REB": "#5CC98A", "AST": "#B48CF0"}
+
 # Muted ink (dark mode) -- raw observations that should recede behind the predictions.
 SERIES_NEUTRAL = "#8C96A3"
 
@@ -82,47 +88,78 @@ def melt_for_overlay(df: pd.DataFrame, player_name: str, stat_cols: list[str] | 
     return melted
 
 
-def build_overlay_chart(
-    combined_df: pd.DataFrame, player_order: list[str], height: int = 450, player_legend: bool = True
-) -> alt.Chart:
-    """Game-log lines: color by player (fixed categorical slots 1 & 2), line style by
-    stat, returned unrendered. Drawn with both players for the overlay, or with one
-    player's rows for each side-by-side panel (`player_legend=False` there: the player
-    cards above the charts already carry each player's color key).
+def build_game_log_chart(
+    long_df: pd.DataFrame,
+    player_order: list[str],
+    stats: list[str],
+    *,
+    colors: list[str] | None = None,
+    y_max: float | None = None,
+    date_range: tuple[pd.Timestamp, pd.Timestamp] | None = None,
+    height: int = 360,
+    player_legend: bool = True,
+) -> alt.LayerChart:
+    """Game-by-game values from melt_for_overlay rows, for one or both players, with a dot
+    per game for hover details. Returned unrendered.
 
-    `player_order` pins Player 1 to blue and Player 2 to orange; without an explicit
-    domain Vega sorts names alphabetically, so colors would swap between charts.
+    - One stat: color means player: `colors` in `player_order` (the app passes team colors;
+      the default is categorical slots 1 & 2). The explicit domain keeps each player's color
+      even when names sort the other way.
+    - Several stats, for one player only: color means stat (STAT_COLORS, none of them a
+      player color). Clicking a stat in the legend isolates it. Two players are compared one
+      stat at a time; with all three each, six lines would be unreadable.
+
+    `y_max` and `date_range` pin the axes so side-by-side panels share both scales;
+    `player_legend=False` for one-player panels, where the player cards above already carry
+    the color key.
     """
-    color_legend = alt.Legend(title=None, orient="top") if player_legend else None
-    return (
-        alt.Chart(combined_df)
-        # No point overlay: Vega-Lite merges it into the stat legend, which then draws its
-        # line samples transparent. 60-80 games per season read fine as lines alone.
-        .mark_line(strokeWidth=2)
-        .encode(
-            x=alt.X("GAME_DATE:T", title=None),
-            y=alt.Y("Value:Q", title="Per game"),
+    if len(stats) > 1 and long_df["Player"].nunique() > 1:
+        raise ValueError("Compare two players one stat at a time.")
+    df = long_df[long_df["Stat"].isin(stats)].assign(Stat=lambda d: d["Stat"].map(STAT_NAMES))
+    names = [STAT_NAMES[stat] for stat in stats]
+    x_scale = alt.Undefined
+    if date_range:
+        x_scale = alt.Scale(domain=[alt.DateTime(year=d.year, month=d.month, date=d.day) for d in date_range])
+    x = alt.X("GAME_DATE:T", title=None, scale=x_scale)
+    y_scale = alt.Scale(domain=[0, y_max], nice=False) if y_max else alt.Undefined
+    y = alt.Y("Value:Q", title=names[0] if len(stats) == 1 else "Per game", scale=y_scale)
+    tooltip = [
+        alt.Tooltip("GAME_DATE:T", title="Game", format="%b %d, %Y"),
+        alt.Tooltip("Player:N"),
+        alt.Tooltip("Stat:N"),
+        alt.Tooltip("Value:Q", format=".0f"),
+    ]
+    top_legend = alt.Legend(title=None, orient="top")
+
+    if len(stats) == 1:
+        base = alt.Chart(df).encode(
+            x=x,
+            y=y,
             color=alt.Color(
                 "Player:N",
-                scale=alt.Scale(domain=player_order, range=[SERIES_BLUE, SERIES_ORANGE]),
-                legend=color_legend,
+                scale=alt.Scale(domain=player_order, range=colors or [SERIES_BLUE, SERIES_ORANGE]),
+                legend=top_legend if player_legend else None,
             ),
-            # Different line style per stat, with points solid since it's the headline stat.
-            strokeDash=alt.StrokeDash(
-                "Stat:N",
-                scale=alt.Scale(domain=metrics.DEFAULT_STAT_COLS, range=[[1, 0], [6, 4], [2, 3]]),
-                legend=alt.Legend(
-                    title=None,
-                    orient="top",
-                    symbolType="stroke",
-                    symbolSize=300,
-                    symbolStrokeColor=_DARK_TEXT_SECONDARY,
-                ),
-            ),
-            tooltip=["GAME_DATE:T", "Player", "Stat", "Value"],
         )
-        .properties(width=900, height=height)
+        lines = base.mark_line(strokeWidth=2)
+        dots = base.mark_circle(size=32, opacity=0.95).encode(tooltip=tooltip)
+        return alt.layer(lines, dots).properties(width=900, height=height)
+
+    picked = alt.selection_point(fields=["Stat"], bind="legend")
+    base = alt.Chart(df).encode(
+        x=x,
+        y=y,
+        color=alt.Color(
+            "Stat:N", scale=alt.Scale(domain=names, range=[STAT_COLORS[s] for s in stats]), legend=top_legend
+        ),
     )
+    lines = base.mark_line(strokeWidth=1.75).encode(
+        opacity=alt.condition(picked, alt.value(1), alt.value(0.1))
+    ).add_params(picked)
+    dots = base.mark_circle(size=22).encode(
+        opacity=alt.condition(picked, alt.value(0.95), alt.value(0.06)), tooltip=tooltip
+    )
+    return alt.layer(lines, dots).properties(width=900, height=height)
 
 
 def build_null_distribution_chart(null_distribution: np.ndarray, observed_diff: float) -> alt.LayerChart:
@@ -222,13 +259,14 @@ def build_backtest_chart(long_df: pd.DataFrame, series_order: list[str], y_title
 
 
 def build_contract_value_chart(
-    values_df: pd.DataFrame, highlight: dict[int, str], typical_ratio: float
+    values_df: pd.DataFrame, highlight: dict[int, str], typical_ratio: float, colors: list[str] | None = None
 ) -> alt.LayerChart:
     """Actual salary vs. production-implied salary for every judged player, log-log.
 
     The shaded band is "fairly paid" (within the model's typical miss of the diagonal);
     dots above it are paid more than production implies, below it less. The two
-    compared players keep their fixed categorical slots (blue, orange).
+    compared players keep the colors they have elsewhere on the page (`colors`, in
+    `highlight` order; categorical slots 1 & 2 by default).
     """
     league = values_df.assign(Salary=values_df["SALARY"] / 1e6, Implied=values_df["IMPLIED_SALARY"] / 1e6)
     both = league[["Salary", "Implied"]]
@@ -262,7 +300,7 @@ def build_contract_value_chart(
     picked = picked.assign(Player=picked["PLAYER_ID"].map(highlight))
     player_color = alt.Color(
         "Player:N",
-        scale=alt.Scale(domain=list(highlight.values()), range=[SERIES_BLUE, SERIES_ORANGE]),
+        scale=alt.Scale(domain=list(highlight.values()), range=colors or [SERIES_BLUE, SERIES_ORANGE]),
         legend=alt.Legend(title=None, orient="top"),
     )
     marked = alt.Chart(picked).mark_circle(size=160, opacity=1, stroke=_DARK_SURFACE, strokeWidth=2)

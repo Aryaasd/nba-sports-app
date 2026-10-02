@@ -62,6 +62,8 @@ LEAGUE_RESULT = {
     "season": "2025-26",
     "n_players": 367,
     "min_games": 40,
+    "ses_mae_pts": 4.72,
+    "season_mean_mae_pts": 4.74,
     "ses_beats_season_mean_pts": 0.39,
     "median_alpha_pts": 0.0,
 }
