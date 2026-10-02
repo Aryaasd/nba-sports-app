@@ -205,6 +205,17 @@ def subhead(text: str) -> str:
     return f'<div class="subhead">{escape(text)}</div>'
 
 
+def figures(pairs: list[tuple[str, str]]) -> str:
+    """Labeled figures styled like st.metric, but wrapping onto separate rows in a narrow
+    column instead of truncating to "$5..." the way side-by-side metrics do."""
+    boxes = "".join(
+        f'<div class="figure-box"><div class="k">{escape(label)}</div>'
+        f'<div class="v">{escape(value)}</div></div>'
+        for label, value in pairs
+    )
+    return f'<div class="figures">{boxes}</div>'
+
+
 def tile(title: str, body: str) -> str:
     return f'<div class="tile"><h3>{escape(title)}</h3><p>{escape(body)}</p></div>'
 

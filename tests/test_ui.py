@@ -119,3 +119,9 @@ def test_unknown_or_inseparable_teams_fall_back_to_slot_colors():
     assert ui.player_line_colors([None, None], fallback) == fallback
     # Two Nets: black is invisible, so both would be white, even with the second color.
     assert ui.player_line_colors(["BKN", "BKN"], fallback) == fallback
+
+
+def test_figures_render_each_label_and_value_escaped():
+    html = ui.figures([("Salary", "$52.6M"), ("Production <implies>", "$36.5M")])
+    assert html.count('class="figure-box"') == 2
+    assert ">$52.6M<" in html and "Production &lt;implies&gt;" in html

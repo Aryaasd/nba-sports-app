@@ -116,14 +116,16 @@ def _render_contract_value(compared: dict[int, str], colors: list[str]) -> None:
                 )
                 continue
             row = match.iloc[0]
-            salary_col, implied_col = st.columns(2)
-            salary_col.metric(
-                "Cap hit (partial season)" if row.PARTIAL_DEAL else "Salary",
-                contract_value.format_millions(row.SALARY),
-            )
+            figures = [
+                (
+                    "Cap hit (partial season)" if row.PARTIAL_DEAL else "Salary",
+                    contract_value.format_millions(row.SALARY),
+                )
+            ]
             # Only figures the model stands behind: not for players it declines to value.
             if row.LABEL in contract_value.VALUED_LABELS:
-                implied_col.metric("Production implies", contract_value.format_millions(row.IMPLIED_SALARY))
+                figures.append(("Production implies", contract_value.format_millions(row.IMPLIED_SALARY)))
+            st.html(ui.figures(figures))
             result = {"label": row.LABEL, "ratio": row.RATIO}
             sentence = contract_value.describe_verdict(result, row.IMPLIED_SALARY)
             # Escaped: Streamlit markdown reads text between two "$" signs as LaTeX math.

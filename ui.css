@@ -80,6 +80,21 @@ button[data-baseweb="tab"]:hover p { color: var(--chalk); }
 
 [data-testid="stVegaLiteChart"] { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 
+/* ui.figures: metric-style boxes that wrap to their own rows when the column is narrow. */
+.figures { display: flex; flex-wrap: wrap; gap: 12px; }
+.figure-box {
+  flex: 1 1 150px; background: var(--seat); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 18px 12px;
+}
+.figure-box .k {
+  font-family: var(--label); font-weight: 600; text-transform: uppercase;
+  letter-spacing: .08em; font-size: 13px; color: var(--chalk-dim);
+}
+.figure-box .v {
+  font-family: var(--display); font-weight: 800; font-size: 2.5rem; line-height: 1.1;
+  font-variant-numeric: tabular-nums; color: var(--chalk); margin-top: 4px;
+}
+
 /* White text on maple fails contrast; the floor's dark ink doesn't. */
 [data-testid="stBaseButton-primary"],
 [data-testid="stBaseButton-primary"] p { color: var(--paint); font-weight: 600; }
