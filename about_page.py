@@ -36,7 +36,8 @@ SOURCES = [
     (
         "Photos and colors",
         "Player headshots load from NBA.com's image server. Team stripes use each club's "
-        "official colors.",
+        "colors, swapping in a lighter accent where a team's own would vanish on the dark "
+        "background.",
     ),
 ]
 

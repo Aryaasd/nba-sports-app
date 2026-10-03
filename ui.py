@@ -17,8 +17,9 @@ CSS_PATH = Path(__file__).resolve().parent / "ui.css"
 # card never shows a broken image.
 HEADSHOT_URL = "https://cdn.nba.com/headshots/nba/latest/1040x760/{player_id}.png"
 
-# Official (primary, secondary) colors. Where a team's secondary is black or a navy that
-# disappears on this dark UI, its next official accent is used instead.
+# Each team's (primary, secondary) colors, hand-entered from commonly published palettes rather
+# than an official style guide; Utah's approximate its 2025 rebrand. Where a team's secondary is
+# black or a navy that disappears on this dark UI, another of its accent colors is used instead.
 TEAM_COLORS = {
     "ATL": ("#E03A3E", "#C1D32F"),
     "BKN": ("#000000", "#FFFFFF"),
@@ -56,11 +57,11 @@ NEUTRAL_COLORS = ("#2A3747", "#A7B0BC")
 _MIN_GLOW_LUMINANCE = 0.03
 
 # Chart lines in team colors: each is lightened (hue kept) until it has this contrast with the
-# chart surface (ui.css --seat), the WCAG minimum for graphics. Two players whose colors end
+# chart surface (ui.css --seat), above WCAG's 3:1 minimum for graphics. Two players whose colors end
 # up closer than _MIN_COLOR_DISTANCE (CIE76 delta E) can't be told apart, so Player 2 moves
 # to his team's second color.
 CHART_SURFACE = "#182230"
-_MIN_LINE_CONTRAST = 3.0
+_MIN_LINE_CONTRAST = 3.6
 _MIN_COLOR_DISTANCE = 40.0
 
 def global_css() -> str:
