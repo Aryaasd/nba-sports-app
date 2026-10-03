@@ -24,7 +24,7 @@ An interactive Streamlit app for comparing NBA players, testing hypotheses about
 * **Insights:** four hypothesis-driven analyses for one player-season:
   * **Absence & Rest Impact** — performance in the games right after missed time, compared with the player's own season baseline.
   * **Performance vs. Defense** — scoring against opponents bucketed by measured `DEF_RATING`.
-  * **Hot Hand Fallacy** — a permutation test of whether makes and misses are streakier than chance, in the spirit of Gilovich, Vallone & Tversky (1985) and the Miller & Sanjurjo (2015) bias correction.
+  * **Hot Hand Fallacy** — a permutation test (2,000 within-game shuffles) of whether makes and misses are streakier than chance, in the spirit of Gilovich, Vallone & Tversky (1985) and the Miller & Sanjurjo (2015) bias correction.
   * **Shot Chart** — a field-goal-percentage heatmap on a hand-drawn court, with low-attempt bins muted so small samples don't look like signal.
 * **Predictions:** two forecasting techniques, each scored only on games it hadn't seen:
   * **Next-Game Points Model** — a Ridge regression trained on 20,932 player-games, evaluated on a full unseen season with bootstrap confidence intervals. It shows a per-player backtest chart and a next-game projection.
@@ -43,7 +43,7 @@ The goal was to find out honestly how well next-game stats *can* be predicted, n
 **Setup**
 - **Training data:** every player's 2024-25 regular season (20,932 player-games after each player's first 10).
 - **Features:** trailing 5- and 10-game averages of points, rebounds, assists, and minutes, plus days of rest and home/away.
-- **Validation:** 5-fold time-series cross-validation, split on whole dates so a single night never straddles train and validation. The **entire 2025-26 season** is a holdout the model never saw.
+- **Validation:** 5-fold time-series cross-validation, split on whole dates so a single night never straddles train and validation. The **entire 2025-26 season** (21,204 player-games) is a holdout the model never saw.
 
 | Model | CV MAE (2024-25) | Holdout MAE (2025-26) | Holdout RMSE |
 |---|---:|---:|---:|
@@ -60,7 +60,7 @@ To test whether those gaps are real rather than noise, the holdout improvements 
 | 10-game average | +0.008 pts | [−0.006, +0.021] | Statistically tied |
 
 **What this shows**
-- The model genuinely beats a 5-game average, but it **ties a plain 10-game average**. The features add nothing measurable beyond a longer averaging window, and the app says so rather than claiming a 0.2% "win".
+- The model genuinely beats a 5-game average, cutting its error by **3.3%** (95% CI 2.8–3.8%), but it **ties a plain 10-game average**. The features add nothing measurable beyond a longer averaging window, and the app says so rather than claiming a 0.2% "win".
 - Single-game scoring is mostly noise around a player's level. With a typical miss near 4.7 points, the floor is close to what any box-score model can reach.
 - A nonlinear random forest didn't beat Ridge either, so the simpler, interpretable model ships.
 
